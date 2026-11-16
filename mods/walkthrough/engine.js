@@ -8,7 +8,8 @@
 //   read/<repo>.json       the hunks read in a repository, by content
 //   preferences.md         optional: the reader's own wishes, added to every prompt
 
-import { exec, home, appHome, readTextFile, writeTextFile } from "herdr";
+// Local patch (machine): these run on the space's machine (machine.js).
+import { exec, home, appHome, readTextFile, writeTextFile } from "./machine.js";
 import { loadSections, sourceKey, describe, git, worthReading, ghError, turnsKey, snapshotTree } from "./lib/sources.js";
 import { buildDigest } from "./lib/digest.js";
 import { buildPrompt } from "./lib/prompt.js";
@@ -260,7 +261,10 @@ export async function startJob(repo, diff, { key, model, language, prompt, sourc
   // Detached: exec returns at once, and the run outlives this window.
   // run.sh stops claude itself at the deadline, so a hung run ends even with no window open.
   const seconds = String(Math.ceil((meta.deadline - meta.started) / 1000));
-  const launched = await exec("sh", ["-c", "nohup sh \"$0\" \"$1\" \"$2\" >/dev/null 2>&1 &", `${dir}/run.sh`, model, seconds]);
+  // Local patch (machine): herdr-core's exec ends every process the command started when it
+  // returns, nohup and setsid ones too. systemd-run hands the run to the user's systemd as a unit
+  // of its own; it gets this PATH (from bash -ic, machine.js) so claude is found.
+  const launched = await exec("sh", ["-c", "if command -v systemd-run >/dev/null; then systemd-run --user --collect --quiet --setenv=PATH=\"$PATH\" sh \"$0\" \"$1\" \"$2\"; else nohup sh \"$0\" \"$1\" \"$2\" >/dev/null 2>&1 & fi", `${dir}/run.sh`, model, seconds]);
   if (launched.code !== 0) {
     await exec("rm", ["-rf", dir]);
     throw new Error((launched.stderr || launched.stdout || `sh exited with ${launched.code}`).trim());

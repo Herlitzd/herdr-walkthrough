@@ -4,7 +4,8 @@
 
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { agents, notify, settings, watchFolder } from "herdr";
+import { agents, notify, settings } from "herdr";
+import { watchFolder } from "./machine.js"; // Local patch (machine)
 import { turnSource, pickTurn, keepTurn, lastFinished, isOpen, autoWritable, firstLine, ago, hookSettings, HOOK_WAIT } from "./lib/turns.js";
 import { turnsFolder, listTurns, closeTurn, readDiff, readPreferences, keyFor, hasEntry, jobOf, preparePrompt, fits, startJob, finished, finishJob, copyText, hookScript } from "./engine.js";
 import { button, formatElapsed } from "./ui.js";

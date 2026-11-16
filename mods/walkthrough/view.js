@@ -3,7 +3,9 @@
 
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, VirtualListScrollHandle } from "gpui-base";
-import { spaces, panes, focused, agents, theme, props, closeOverlay, hc, exec, nextCommand, settings, shared, setShared, watchFolder } from "herdr";
+import { spaces, panes, focused, agents, theme, props, closeOverlay, hc, nextCommand, settings, shared, setShared } from "herdr";
+// Local patch (machine): git, claude and files on the space's machine (machine.js).
+import { exec, watchFolder, useMachine } from "./machine.js";
 import { SCOPES, repoAt, currentHead, defaultBase, baseChoices, recentCommits, pullRequests, sourceKey, commitMessage, taskSince } from "./lib/sources.js";
 import { overlay, fileTotals, overlayAsks, asksOf } from "./lib/walkthrough.js";
 import { TASK_MODES, taskChoice, resolveTask, taskKey, taskCacheKey, clip, MAX_TASK_CHARS } from "./lib/task.js";
@@ -73,7 +75,10 @@ export class Walkthrough {
     const here = location();
     this.folder = p.folder ?? here.folder;
     this.space = here.space;
-    this.remote = Boolean(here.space?.machine);
+    // Local patch (machine): a space on another machine is read there (machine.js); `props.on` names it.
+    this.machine = p.on ?? here.space?.machine ?? null;
+    this.remote = false;
+    this.prWanted = p.pr ?? null; // Local patch (pr): the PR to open on, from Paddock's PR row
     this.from = here.terminal; // the terminal it was opened over: comments go to its agent first
     this.inDialog = Boolean(p.overlay);
     this.tab = (p.pane && panes().find((x) => x.pane === p.pane)?.tab) || focused()?.tab || null; // a pane watches this tab's agents
@@ -149,6 +154,7 @@ export class Walkthrough {
 
     cx.spawn(async (cx) => {
       if (!this.folder || this.remote) { this.repo = null; cx.notify(); return; }
+      await useMachine(this.machine);
       const [repo, claude, locale] = await Promise.all([repoAt(exec, this.folder).catch(() => null), claudeVersion(), this.language ? null : systemLocale()]);
       this.repo = repo;
       this.claude = claude;
@@ -550,7 +556,9 @@ export class Walkthrough {
       this.prError = String(e?.message ?? e);
     }
     const kept = this.pr && this.prs.find((p) => p.number === this.pr.number);
-    this.pr = kept ?? this.prs.find((p) => p.current) ?? null;
+    const wanted = this.prWanted && this.prs.find((p) => p.number === this.prWanted);
+    this.prWanted = null;
+    this.pr = wanted ?? kept ?? this.prs.find((p) => p.current) ?? null;
   }
 
   /** The task picker: found or off applies at once; your own opens the editor, filled with what is there now. */
@@ -662,7 +670,9 @@ export class Walkthrough {
     const text = this.markdown();
     if (!text) return;
     try {
-      await copyText(text);
+      // Local patch (machine): the app's own clipboard; on WSL there's no pbcopy, wl-copy or xclip.
+      if (typeof cx?.write_to_clipboard === "function") cx.write_to_clipboard(text);
+      else await copyText(text);
       this.flash("Copied the walkthrough as Markdown.");
     } catch (err) {
       this.flash(`Couldn't copy: ${String(err?.message ?? err)}`);
