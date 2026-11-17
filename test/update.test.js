@@ -132,3 +132,39 @@ test("a result saved for another repository counts as never checked, but Stop ch
   await f.u.check();
   assert.equal(f.calls.length, 1);
 });
+
+test("a request that never answers counts as failed and is asked again an hour later", async () => {
+  const store = new Map();
+  let clock = 1_000_000_000_000, asked = 0, hang = true;
+  const u = updater({
+    shared: (k) => store.get(k),
+    setShared: (k, v) => { store.set(k, v); return null; },
+    fetch: async () => { asked++; if (hang) return new Promise(() => {}); return { ok: true, json: async () => ({ tag_name: "v9.0.0" }) }; },
+    now: () => clock,
+    version: "0.5.2",
+    wait: async () => {},
+  });
+  await u.check();
+  assert.equal(u.available(), null);
+  clock += 60 * 60 * 1000;
+  hang = false;
+  await u.check();
+  assert.equal(asked, 2, "asked again an hour later, not a day");
+  assert.equal(u.available().tag, "v9.0.0");
+});
+
+test("a check cut short (the view dropped mid-request) doesn't count as asked", async () => {
+  const store = new Map();
+  let clock = 1_000_000_000_000, asked = 0;
+  const make = (fetch) => updater({ shared: (k) => store.get(k), setShared: (k, v) => { store.set(k, v); return null; }, fetch, now: () => clock, version: "0.5.2", wait: () => new Promise(() => {}) });
+  // A first copy asks and is never answered: Herdr dropped the view, or the dialog closed.
+  make(async () => { asked++; return new Promise(() => {}); }).check();
+  await Promise.resolve();
+  const second = make(async () => { asked++; return { ok: true, json: async () => ({ tag_name: "v9.0.0" }) }; });
+  await second.check();
+  assert.equal(asked, 2, "the copy that stays asks too");
+  assert.equal(second.available().tag, "v9.0.0");
+  clock += 60 * 60 * 1000;
+  await second.check();
+  assert.equal(asked, 2, "an answer counts for the day");
+});

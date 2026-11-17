@@ -17,6 +17,15 @@ export const PROMPT = `Update the Walkthrough mod from github.com/${REPO} to its
 const KEY = "walkthrough.update";
 const DAY = 24 * 60 * 60 * 1000;
 const RETRY = 60 * 60 * 1000;
+// A request that neither answers nor fails would otherwise hold the check for a day
+// (its time is saved before asking): past this it counts as failed, tried again in an hour.
+const TIMEOUT = 15 * 1000;
+
+/**
+ * Resolves after `ms`. Herdr's script runtime may have no `setTimeout`: the dialog hands
+ * in its own timer (`cx.timer.after`); without either, the time limit simply doesn't apply.
+ */
+const defaultWait = (ms) => (typeof setTimeout === "function" ? new Promise((r) => setTimeout(r, ms)) : new Promise(() => {}));
 
 /** a > b, for versions like v1.2.3 or 1.2.3. */
 export function newer(a, b) {
@@ -31,7 +40,7 @@ export function newer(a, b) {
  * open copy of the dialog sees it. A result saved for another repository (a
  * fork, a test) counts as never checked; "Stop checking" holds for all of them.
  */
-export function updater({ shared, setShared, fetch, now = () => Date.now(), check = CHECK, version = VERSION }) {
+export function updater({ shared, setShared, fetch, now = () => Date.now(), check = CHECK, version = VERSION, timeout = TIMEOUT, wait = defaultWait }) {
   const state = () => {
     const s = shared(KEY) ?? {};
     return s.repo === REPO ? s : { off: s.off };
@@ -58,17 +67,20 @@ export function updater({ shared, setShared, fetch, now = () => Date.now(), chec
       // A failed try is saved as if it were a day old less an hour: asked again in an hour.
       const retry = () => save({ checked: now() - DAY + RETRY });
       try {
-        // Saved before asking, so another copy of the dialog doesn't ask too.
-        save({ checked: now() });
-        const r = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
+        // Nothing is saved before asking: Herdr may make a view and drop it at once, and a
+        // request cut short with it (or by closing the dialog) must not count as asked.
+        // Two copies open together may both ask; that is one more GET, once a day.
+        const late = wait(timeout).then(() => { throw new Error("timed out"); });
+        late.catch(() => {});
+        const r = await Promise.race([fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
           headers: { Accept: "application/vnd.github+json", "User-Agent": "herdr-walkthrough" },
-        });
+        }), late]);
         if (!r.ok) return retry();
         const j = await r.json();
-        if (typeof j?.tag_name !== "string" || !/^v?\d+\.\d+\.\d+$/.test(j.tag_name)) return;
+        if (typeof j?.tag_name !== "string" || !/^v?\d+\.\d+\.\d+$/.test(j.tag_name)) return save({ checked: now() });
         // Only a page of this repository's is opened from the dialog.
         const url = String(j.html_url ?? "");
-        save({ latest: { tag: j.tag_name, url: url.startsWith(`https://github.com/${REPO}/`) ? url : RELEASES } });
+        save({ checked: now(), latest: { tag: j.tag_name, url: url.startsWith(`https://github.com/${REPO}/`) ? url : RELEASES } });
       } catch {
         // Offline, a network not up yet after a wake: try again in an hour.
         try { retry(); } catch { /* shared state gone: nothing to keep */ }
