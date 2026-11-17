@@ -1,10 +1,11 @@
 import { contractStrings } from "./contract-language.js";
+import { recapStrings } from "./recap-language.js";
 
 /** Recap is always first; specialized pages are conditional, before code steps. */
 export function reportPages(walkthrough, view, language = "en", { task = Array.isArray(walkthrough?.asks) } = {}) {
   if (!view) return [];
   return [
-    { kind: "recap", title: "Recap" },
+    { kind: "recap", title: recapStrings(language).recap },
     ...(task ? [{ kind: "task", title: "Task" }] : []),
     ...(walkthrough?.contracts ?? []).map((contract, index) => ({ kind: "contract", title: contractStrings(language).kinds[contract.kind], contract, index })),
     ...view.steps.map((step) => ({ kind: "step", title: step.title, step })),

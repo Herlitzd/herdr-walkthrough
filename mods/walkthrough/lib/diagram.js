@@ -7,6 +7,13 @@ const NODE = new RegExp(`^(${ID})\\s*\\[(.+)\\]$`);
 const EDGE = new RegExp(`^(${ID})\\s*-->\\s*(?:\\|(.*?)\\|\\s*)?(${ID})$`);
 const GROUP = new RegExp(`^subgraph\\s+(${ID})(?:\\s*\\[(.+)\\])?$`);
 
+// Words Mermaid reads as syntax: as an id, `end` closes a block and the rest
+// start statements, so a diagram using one draws here but breaks on GitHub.
+const RESERVED = new Set(["end", "graph", "flowchart", "subgraph", "click", "style", "class", "classdef", "linkstyle", "direction", "default"]);
+
+/** An id as stored and exported: a reserved word gets a trailing "_", everywhere it is used. */
+export const safeId = (id) => (RESERVED.has(String(id).toLowerCase()) ? `${id}_` : String(id));
+
 /** A label as written, quoted or not; null when it holds what a renderer could misread. */
 function labelOf(inner, extra = "") {
   const s = String(inner ?? "").trim();
@@ -31,6 +38,8 @@ export function parseMermaid(source) {
   let activeGroup = null;
   for (const line of lines) {
     const group = GROUP.exec(line), node = NODE.exec(line), edge = EDGE.exec(line);
+    for (const m of [group, node]) if (m) m[1] = safeId(m[1]);
+    if (edge) { edge[1] = safeId(edge[1]); edge[3] = safeId(edge[3]); }
     if (group) {
       const title = group[2] === undefined ? group[1] : labelOf(group[2], "|");
       if (title === null || activeGroup || groupIds.has(group[1]) || ids.has(group[1])) invalid();
@@ -47,12 +56,17 @@ export function parseMermaid(source) {
     } else if (edge && !activeGroup) {
       const label = edge[2] === undefined ? undefined : labelOf(edge[2], "|");
       if (label === null) invalid();
-      edges.push({ from: edge[1], to: edge[3], ...(label ? { label } : {}) });
+      // A relationship is drawn once: a repeat adds nothing but a wire over the first (and keeps its label, if the first had none).
+      const same = edges.find((e) => e.from === edge[1] && e.to === edge[3]);
+      if (same) { if (label && !same.label) same.label = label; } else edges.push({ from: edge[1], to: edge[3], ...(label ? { label } : {}) });
     } else invalid();
   }
   if (activeGroup || !nodes.length || edges.some((e) => !ids.has(e.from) || !ids.has(e.to))) invalid();
   return { direction: header[1] === "LR" ? "LR" : "TB", nodes, edges, ...(groups.length ? { groups } : {}) };
 }
+
+/** A diagram given as source or as already parsed: parsed once, when it is checked, not again for each use. */
+export const graphOf = (source) => (typeof source === "string" ? parseMermaid(source) : source);
 
 /**
  * The diagram as stored: declared nodes and plain edges in one spelling. Edge
@@ -155,7 +169,9 @@ export function layoutDiagram(source, connections = [], groups = []) {
     const list = (entering ? incoming : outgoing).get(node.id);
     return (list.indexOf(edge) + 1) / (list.length + 1);
   };
-  let lane = 0;
+  // Outer lanes (skipped ranks) and cycle detours count apart: the gap between
+  // layers is sized for the cycle detours alone, so they must not inherit outer lanes.
+  let lane = 0, loop = 0;
   const edges = graph.edges.map((edge) => {
     const a = byId.get(edge.from), b = byId.get(edge.to);
     const out = port(a, edge, false), into = port(b, edge, true);
@@ -185,11 +201,11 @@ export function layoutDiagram(source, connections = [], groups = []) {
     } else {
       // Edges within a cycle (including self-loops) use a gap beside the layer.
       if (horizontal) {
-        const x = a.x + nodeW + 24 + lane++ * (labeled ? 36 : 8);
+        const x = a.x + nodeW + 24 + loop++ * (labeled ? 36 : 8);
         points = [[a.x + nodeW, a.y + nodeH / 3], [x, a.y + nodeH / 3], [x, b.y + 2 * nodeH / 3], [b.x + nodeW, b.y + 2 * nodeH / 3]];
         width = Math.max(width, x + pad);
       } else {
-        const y = a.y + nodeH + 24 + lane++ * (labeled ? 36 : 8);
+        const y = a.y + nodeH + 24 + loop++ * (labeled ? 36 : 8);
         points = [[a.x + nodeW / 3, a.y + nodeH], [a.x + nodeW / 3, y], [b.x + 2 * nodeW / 3, y], [b.x + 2 * nodeW / 3, b.y + nodeH]];
         height = Math.max(height, y + pad);
       }

@@ -35,10 +35,10 @@ export const SCHEMA = {
       type: "object", additionalProperties: false,
       required: ["changes", "architecture"],
       properties: {
-        changes: { type: "array", minItems: 1, items: {
+        changes: { type: "array", items: {
           type: "object", additionalProperties: false,
           required: ["description", "motivation", "paths"],
-          properties: { description: str, motivation: str, paths: { type: "array", minItems: 1, items: str } },
+          properties: { description: str, motivation: str, paths: { type: "array", items: str } },
         } },
         architecture: {
           type: "object", additionalProperties: false,
@@ -187,11 +187,11 @@ export function normalize(raw, idByAlias, digestFiles = [], { asks: withTask = f
 
   // Steps are the only part an answer must have. A recap, blueprint or contract
   // detail that doesn't hold up is left out and counted, never failing the run.
-  const recap = normalizeRecap(raw.recap, digestFiles, idByAlias);
-  const contractOmit = { count: 0 };
+  const recapOmit = { count: 0 }, contractOmit = { count: 0 };
+  const recap = normalizeRecap(raw.recap, digestFiles, idByAlias, recapOmit);
   const contracts = normalizeContracts(raw.contracts, idByAlias, digestFiles, contractOmit);
   const asks = withTask ? normalizeAsks(raw.asks, idByAlias) : null;
-  const omitted = { recap: recap?.omitted ?? 0, contracts: contractOmit.count };
+  const omitted = { recap: recapOmit.count, contracts: contractOmit.count };
   return {
     recap, contracts, asks, title: text(raw.title, 140) || "Walkthrough", summary: text(raw.summary), parts, skipped, dropped,
     ...(omitted.recap || omitted.contracts ? { omitted } : {}),
@@ -201,15 +201,14 @@ export function normalize(raw, idByAlias, digestFiles = [], { asks: withTask = f
 /**
  * The recap: what changed and why, and the architecture it lands in. Every
  * part is checked against the digest, and what doesn't hold up is left out and
- * counted in `omitted` (absent when nothing was): a change without its reason
+ * counted in `omit.count`: a change without its reason
  * or real files, a diagram outside the drawn subset (the blueprint then goes
  * with it, the description stays), a component, label or boundary without
  * evidence. Files no change names are listed under `other`, never lost.
  */
-function normalizeRecap(raw, files, idByAlias) {
+function normalizeRecap(raw, files, idByAlias, omit = { count: 0 }) {
   // None at all reads as a report from before recaps: the page offers to regenerate.
   if (!raw || typeof raw !== "object") return null;
-  const omit = { count: 0 };
   const known = new Set(files.map((f) => f.path));
   const changes = [];
   for (const c of Array.isArray(raw?.changes) ? raw.changes : []) {
@@ -228,18 +227,17 @@ function normalizeRecap(raw, files, idByAlias) {
     omit.count++;
   }
   if (architecture.mermaid) {
-    const components = normalizeComponents(rawArchitecture?.components, architecture.mermaid, idByAlias, files, omit);
-    const connections = normalizeConnections(rawArchitecture?.connections, architecture.mermaid, idByAlias, files, omit);
-    const groups = normalizeGroups(rawArchitecture?.groups, architecture.mermaid, components, idByAlias, files, omit);
+    const graph = parseMermaid(architecture.mermaid);
+    const components = normalizeComponents(rawArchitecture?.components, graph, idByAlias, files, omit);
+    const connections = normalizeConnections(rawArchitecture?.connections, graph, idByAlias, files, omit);
+    const groups = normalizeGroups(rawArchitecture?.groups, graph, components, idByAlias, files, omit);
     if (components !== undefined) architecture.components = components;
     if (connections !== undefined) architecture.connections = connections;
     if (groups !== undefined) architecture.groups = groups;
   }
-  return { changes, ...(other.length ? { other } : {}), architecture, ...(omit.count ? { omitted: omit.count } : {}) };
+  return { changes, ...(other.length ? { other } : {}), architecture };
 }
 
-/** A deliberately small, portable Mermaid flowchart subset. */
-export function validateMermaid(source) { parseMermaid(source); }
 
 /**
  * The task's requests, each with real hunk ids. Coverage follows the hunks,

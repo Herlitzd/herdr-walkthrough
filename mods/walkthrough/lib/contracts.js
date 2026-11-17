@@ -5,19 +5,19 @@ export const COMPATIBILITY = ["additive", "breaking", "mixed", "unknown"];
 export const OPERATIONS = ["added", "removed", "modified"];
 const str = { type: "string" };
 export const CONTRACT_SCHEMA = {
-  type: "array", maxItems: 3,
+  type: "array",
   items: {
     type: "object", additionalProperties: false,
     required: ["kind", "title", "summary", "compatibility", "impact", "changes", "rollout"],
     properties: {
       kind: { type: "string", enum: CONTRACT_KINDS }, title: str, summary: str,
       compatibility: { type: "string", enum: COMPATIBILITY }, impact: str,
-      changes: { type: "array", minItems: 1, items: {
+      changes: { type: "array", items: {
         type: "object", additionalProperties: false,
         required: ["name", "operation", "before", "after", "detail", "hunks"],
         properties: {
           name: str, operation: { type: "string", enum: OPERATIONS }, before: str, after: str, detail: str,
-          hunks: { type: "array", minItems: 1, items: str },
+          hunks: { type: "array", items: str },
         },
       } },
       rollout: { type: "array", items: str },
@@ -59,5 +59,3 @@ export function normalizeContracts(raw, idByAlias, files, omit = { count: 0 }) {
   return pages.sort((a, b) => CONTRACT_KINDS.indexOf(a.kind) - CONTRACT_KINDS.indexOf(b.kind));
 }
 
-// Backward-compatible defaults use the default report language, English.
-export { DEFAULT_CONTRACT_LABELS as CONTRACT_LABELS, DEFAULT_COMPATIBILITY_LABELS as COMPATIBILITY_LABELS, DEFAULT_OPERATION_LABELS as OPERATION_LABELS } from "./contract-language.js";

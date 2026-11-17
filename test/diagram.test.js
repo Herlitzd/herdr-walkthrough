@@ -67,3 +67,32 @@ test('branches use distinct ports and all connector segments remain orthogonal',
     }
   }
 });
+
+test('reserved Mermaid words as ids are renamed consistently, so exports stay renderable', async () => {
+  const { canonicalMermaid } = await import('../mods/walkthrough/lib/diagram.js');
+  const { normalizeComponents } = await import('../mods/walkthrough/lib/blueprint.js');
+  const { normalizeConnections } = await import('../mods/walkthrough/lib/connections.js');
+  const src = canonicalMermaid('flowchart TB\nA["Start"]\nend["Finish"]\nA --> end');
+  assert.equal(src, 'flowchart TB\nA["Start"]\nend_["Finish"]\nA --> end_');
+  assert.doesNotMatch(src, /(^|\s)end(\s|$)/m);
+  const files = [{ path: 'a.js', status: 'modified', aliases: ['h1'] }], aliases = { h1: 'id1' };
+  const comps = normalizeComponents([{ id: 'end', status: 'modified', responsibility: 'r', change: 'c', paths: [], hunks: ['h1'] }], src, aliases, files);
+  assert.equal(comps[0].id, 'end_');
+  assert.equal(normalizeConnections([{ from: 'A', to: 'end', label: 'finishes', hunks: ['h1'] }], src, aliases, files)[0].to, 'end_');
+});
+test('loop detours stay in the gap between layers whatever outer lanes came first', () => {
+  for (const dir of ['TB', 'LR']) {
+    const d = `flowchart ${dir}\nA["A"]\nB["B"]\nC["C"]\nD["D"]\nE["E"]\nA --> B\nB --> C\nC --> D\nD --> E\nA --> C\nA --> D\nB --> E\nC --> B`;
+    const labels = parseMermaid(d).edges.map((e) => ({ ...e, label: 'x' }));
+    const g = layoutDiagram(d, labels);
+    for (const e of g.edges) for (let i = 1; i < e.points.length; i++) {
+      const [a, b] = [e.points[i - 1], e.points[i]];
+      const seg = { x: Math.min(a[0], b[0]), y: Math.min(a[1], b[1]), width: Math.abs(a[0] - b[0]) || 1, height: Math.abs(a[1] - b[1]) || 1 };
+      for (const n of g.nodes) {
+        if (n.id === e.from || n.id === e.to) continue;
+        const hit = seg.x < n.x + n.width && seg.x + seg.width > n.x && seg.y < n.y + n.height && seg.y + seg.height > n.y;
+        assert.ok(!hit, `${dir} ${e.from}->${e.to} crosses ${n.id}`);
+      }
+    }
+  }
+});

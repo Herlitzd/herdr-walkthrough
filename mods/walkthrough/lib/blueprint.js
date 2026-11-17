@@ -1,10 +1,10 @@
-import { parseMermaid } from "./diagram.js";
+import { graphOf, safeId } from "./diagram.js";
 import { filesByAlias, resolveHunks } from "./alias.js";
 
 export const COMPONENT_LABELS = { added: "Added", modified: "Modified", context: "Context" };
 const str = { type: "string" };
 export const COMPONENT_SCHEMA = {
-  type: "array", minItems: 1,
+  type: "array",
   items: {
     type: "object", additionalProperties: false,
     required: ["id", "status", "responsibility", "change", "paths", "hunks"],
@@ -27,11 +27,11 @@ const text = (v) => typeof v === "string" ? v.trim() : "";
 export function normalizeComponents(raw, mermaid, aliases, files, omit = { count: 0 }) {
   if (raw === undefined) return undefined; // Older reports retain an unclassified diagram.
   if (!Array.isArray(raw)) { omit.count++; return []; }
-  const ids = new Set(parseMermaid(mermaid).nodes.map((n) => n.id)), seen = new Set();
+  const ids = new Set(graphOf(mermaid).nodes.map((n) => n.id)), seen = new Set();
   const fileByAlias = filesByAlias(files);
   const out = [];
   for (const c of raw) {
-    const id = text(c?.id), responsibility = text(c?.responsibility);
+    const id = safeId(text(c?.id)), responsibility = text(c?.responsibility);
     let status = c?.status, change = text(c?.change);
     if (!ids.has(id) || seen.has(id) || !Object.hasOwn(COMPONENT_LABELS, status) || !responsibility) { omit.count++; continue; }
     // A component in the resulting architecture is shown by code that remains.

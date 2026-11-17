@@ -26,7 +26,9 @@ test('unsupported, reversed, duplicate and ambiguous connections are left out an
     assert.deepEqual(kept([{ ...connection(), ...patch }]), { out: [], omitted: 1 });
   }
   assert.deepEqual(kept([connection(), connection()]), { out: normalized(), omitted: 1 });
-  assert.deepEqual(kept([connection()], source + '\nB --> C'), { out: [], omitted: 1 });
+  // A repeated edge is one relationship: it can still be labeled, and is drawn once.
+  assert.deepEqual(kept([connection()], source + '\nB --> C'), { out: normalized(), omitted: 0 });
+  assert.equal(parseMermaid(source + '\nB --> C').edges.length, 2);
   assert.deepEqual(kept([connection()], source, [{ ...files[0], status: 'deleted' }]), { out: [], omitted: 1 });
   assert.deepEqual(kept([{ ...connection(), from: ' B ', hunks: ['[h1]'] }]), { out: normalized(), omitted: 0 });
   assert.deepEqual(kept('nope'), { out: [], omitted: 1 });

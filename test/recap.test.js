@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { normalize, overlay, validateMermaid, SCHEMA } from "../mods/walkthrough/lib/walkthrough.js";
+import { normalize, overlay, SCHEMA } from "../mods/walkthrough/lib/walkthrough.js";
+import { parseMermaid as validateMermaid } from "../mods/walkthrough/lib/diagram.js";
 import { buildPrompt } from "../mods/walkthrough/lib/prompt.js";
 import { recapMarkdown, toMarkdown } from "../mods/walkthrough/lib/export.js";
 

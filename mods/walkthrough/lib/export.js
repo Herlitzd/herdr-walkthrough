@@ -1,5 +1,5 @@
 import { mermaidWithConnections } from "./diagram.js";
-import { COMPONENT_LABELS } from "./blueprint.js";
+import { recapStrings } from "./recap-language.js";
 import { contractStrings } from "./contract-language.js";
 // A walkthrough as Markdown, to paste where people read changes: a pull
 // request's description, a review comment, a chat. Steps keep their order,
@@ -22,28 +22,29 @@ const code = (s) => {
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
-/** Shared by the report page and Markdown export. */
-export function recapMarkdown(recap, { diagram = true, architecture = true } = {}) {
-  if (!recap) return "### Recap\n\nThis saved report predates recaps. Regenerate it to include all changes, motivations and architecture.\n";
-  const out = ["### Recap", ""];
+/** Shared by the report page and Markdown export. Its own words are in the report's language, like the contracts'. */
+export function recapMarkdown(recap, { diagram = true, architecture = true, language = "en" } = {}) {
+  const w = recapStrings(language);
+  if (!recap) return `### ${w.recap}\n\nThis saved report predates recaps. Regenerate it to include all changes, motivations and architecture.\n`;
+  const out = [`### ${w.recap}`, ""];
   for (const c of recap.changes) {
-    out.push(`- **Change:** ${line(c.description)}\n  **Motivation:** ${line(c.motivation)}\n  **Files:** ${c.paths.map(code).join(", ")}`, "");
+    out.push(`- **${w.change}:** ${line(c.description)}\n  **${w.motivation}:** ${line(c.motivation)}\n  **${w.files}:** ${c.paths.map(code).join(", ")}`, "");
   }
-  if (recap.other?.length) out.push(`- **Other changes:** ${recap.other.map(code).join(", ")}`, "");
-  if (architecture && recap.architecture.description) out.push("#### Architecture", "", line(recap.architecture.description), "");
+  if (recap.other?.length) out.push(`- **${w.other}:** ${recap.other.map(code).join(", ")}`, "");
+  if (architecture && recap.architecture.description) out.push(`#### ${w.architecture}`, "", line(recap.architecture.description), "");
   if (diagram && recap.architecture.mermaid) out.push("```mermaid", mermaidWithConnections(recap.architecture.mermaid, recap.architecture.connections, recap.architecture.groups), "```", "");
   if (architecture && recap.architecture.components?.length) {
-    out.push("#### Components", "");
+    out.push(`#### ${w.components}`, "");
     for (const c of recap.architecture.components) {
-      out.push(`- **${line(c.id)} · ${COMPONENT_LABELS[c.status]}:** ${line(c.responsibility)}`);
-      if (c.change) out.push(`  **Change:** ${line(c.change)}`);
-      if (c.paths.length) out.push(`  **Files:** ${c.paths.map(code).join(", ")}`);
+      out.push(`- **${line(c.id)} · ${w.status[c.status]}:** ${line(c.responsibility)}`);
+      if (c.change) out.push(`  **${w.change}:** ${line(c.change)}`);
+      if (c.paths.length) out.push(`  **${w.files}:** ${c.paths.map(code).join(", ")}`);
     }
     out.push("");
   }
   if (architecture && recap.architecture.groups?.length) {
-    out.push("#### Architecture groups", "");
-    for (const g of recap.architecture.groups) out.push(`- **${line(g.title)}:** ${line(g.reason)}\n  **Components:** ${g.nodes.map(code).join(", ")}`, "");
+    out.push(`#### ${w.groups}`, "");
+    for (const g of recap.architecture.groups) out.push(`- **${line(g.title)}:** ${line(g.reason)}\n  **${w.components}:** ${g.nodes.map(code).join(", ")}`, "");
   }
   return out.join("\n");
 }
@@ -79,7 +80,7 @@ export function toMarkdown(view, walkthrough, { what = "", model = "", language 
   if (walkthrough.summary?.trim()) out.push(walkthrough.summary.trim(), "");
   const about = [what && line(what), model, language, typeof cost === "number" ? `$${cost.toFixed(cost < 0.1 ? 3 : 2)}` : ""].filter(Boolean);
   if (about.length) out.push(`<sub>${about.join(" · ")}</sub>`, "");
-  if (walkthrough.recap) out.push(recapMarkdown(walkthrough.recap));
+  if (walkthrough.recap) out.push(recapMarkdown(walkthrough.recap, { language }));
   if (task) out.push(...taskMarkdown(task, taskLabel));
   for (const page of walkthrough.contracts ?? []) out.push(contractMarkdown(page, language));
 

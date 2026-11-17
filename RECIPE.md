@@ -19,8 +19,9 @@ matching reading section, or to the relevant Contract or Not covered page.
 Conditional database, Protobuf and API contract pages follow Recap and Task before the
 code steps. Each change has a before/after comparison, its own exact source diff toggle
 and links to matching walkthrough steps. Stale source and changes without a matching step
-are marked. Contract UI and Markdown labels follow the saved report's language (not the
-picker's); the other Recap and blueprint labels are English. Generation explicitly
+are marked. Contract and Recap labels (`lib/contract-language.js`, `lib/recap-language.js`),
+in the UI and the Markdown, follow the saved report's language (not the picker's); a few
+blueprint hints and the step labels are English. Generation explicitly
 requests the chosen language. Existing wrong-language prose needs regeneration. Older
 reports remain readable; new metadata requires regeneration.
 
@@ -30,10 +31,12 @@ contracts against the digest and leaves out what doesn't hold up, counting it in
 a motivation or a real path; a diagram outside the subset (the blueprint goes, the
 description stays); a component, connection or group without real resulting evidence; a
 contract change without evidence or states to compare, and a page left with none.
-Recap paths no change names go to `recap.other`. Aliases are read as in steps (`[h1]`,
+Recap paths no change names go to `recap.other`; generated and unread files are listed in
+the prompt (contents not sent) and count as recap paths. Aliases are read as in steps (`[h1]`,
 spaces). The Mermaid subset accepts `graph`, trailing `;`, `A-->B`, unquoted `A[Label]`
 and `%%` comments, and is stored in one canonical spelling without inline labels or
-subgraphs: only source-backed connections and groups draw those. A report opens on Recap
+subgraphs: only source-backed connections and groups draw those. A repeated edge is kept
+once, and an id Mermaid reserves (`end`, `click`, …) gets a trailing `_` everywhere. A report opens on Recap
 while none of its steps is read, else on its first unread step.
 
 All pages share one reading order. Persistent hunk read tracking counts only code steps;

@@ -106,7 +106,6 @@ test('task schema and normalization retain Recap, contracts, blueprint evidence 
   assert.equal(p.shown.entry.walkthrough.recap.architecture.components[0].hunkIds[0],digest.idByAlias.h1);
   assert.equal(p.taskView.asks[0].steps[0],p.view.steps[0]);
   assert.deepEqual(p.pages().map((page)=>page.kind),['recap','task','contract','step','step','tail']);
-  assert.equal(p.firstPage(),0);
   const legacy=panel({task:false});
   assert.deepEqual(reportPages(legacy.shown.entry.walkthrough,legacy.view).map((page)=>page.kind),['recap','contract','step','step','tail']);
 });
@@ -163,14 +162,18 @@ test('changed-since-read banner navigates with Task and Contracts offsets', () =
 test('Recap leads Markdown; own task stays out of PR posts while contract localization remains', () => {
   const p=panel();p.shown.entry.language='pl';
   const copied=p.markdown(),posted=p.markdown({forPost:true});
-  assert.ok(copied.indexOf('### Recap')<copied.indexOf('### Task'));
+  assert.ok(copied.indexOf('### Podsumowanie')<copied.indexOf('### Task'));
+  assert.ok(!copied.includes('### Recap'),'the recap heading follows the report language');
+  assert.match(copied,/\*\*Motywacja:\*\*/);assert.match(copied,/A · Zmieniono:/);
   assert.ok(copied.indexOf('### Task')<copied.indexOf('### Baza danych'));
   assert.ok(copied.includes('### Baza danych'));assert.ok(!posted.includes('### Task'));
-  assert.ok(posted.includes('### Recap'));assert.ok(posted.includes('### Baza danych'));
+  assert.ok(posted.includes('### Podsumowanie'));assert.ok(posted.includes('### Baza danych'));
 });
 test('merged prompt includes task rules and generated-file recap visibility while enforcing chosen language last', () => {
   const prompt=preparePrompt({...digest,what:'Synthetic change',generatedPaths:['generated.lock']},{language:'en',preferences:'Write in Polish.',task:{about:'Your task',text:'Require status.'}});
-  assert.match(prompt.prompt,/generated.lock/);assert.match(prompt.prompt,/<task>/);assert.match(prompt.system,/Map the task to the change in "asks"/);
+  assert.match(prompt.prompt,/generated.lock/);
+  const withUnread=preparePrompt({...digest,what:'x',generatedPaths:[],unread:[{path:'big.bin',why:'Too large to read'}]},{language:'en'});
+  assert.match(withUnread.prompt,/"big.bin" \(Too large to read\)/);assert.match(prompt.prompt,/<task>/);assert.match(prompt.system,/Map the task to the change in "asks"/);
   assert.ok(prompt.system.lastIndexOf('Write all prose in English')>prompt.system.lastIndexOf('Write in Polish.'));
   assert.match(prompt.system,/contract titles/);
 });
@@ -194,5 +197,19 @@ test('Recap says when details were left out and when there is no blueprint', () 
   assert.doesNotMatch(text(p.reportPage(colors)),/left out|No blueprint/);
   w.omitted={recap:2,contracts:1};w.recap.architecture.mermaid='';
   const page=text(p.reportPage(colors));
-  assert.match(page,/3 details .* were left out/);assert.match(page,/No blueprint/);
+  assert.match(page,/Left out 3 detail/);assert.match(page,/No blueprint/);
+});
+test('Recap page, contents and blueprint inspector follow the report language', () => {
+  const p=panel();p.shown.entry.language='tr';
+  const page=text(p.reportPage(colors));
+  assert.match(page,/Özet/);assert.match(page,/Değişiklikler ve gerekçeleri/);assert.match(page,/Mimari/);assert.match(page,/Değiştirildi/);
+  assert.doesNotMatch(page,/COMPONENT DETAILS|Changes and motivations/);
+  assert.equal(p.pages()[0].title,'Özet');
+  assert.ok(find(p.contents(colors),'toc-recap'));assert.match(text(p.contents(colors)),/Özet/);
+});
+test('a new report whose components were all left out does not claim to predate them', () => {
+  const p=panel();p.shown.entry.walkthrough.recap.architecture.components=[];
+  assert.doesNotMatch(text(p.reportPage(colors)),/predates component details/);
+  delete p.shown.entry.walkthrough.recap.architecture.components;
+  assert.match(text(p.reportPage(colors)),/predates component details/);
 });

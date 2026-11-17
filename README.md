@@ -39,14 +39,15 @@ When the diff changes a database schema, Protobuf definition or public API contr
 **Contracts** pages follow Recap and the optional Task page. Each change shows before/after
 excerpts, compatibility impact, deployment order when established, its exact supporting
 diff and links to matching code steps. Missing evidence and changes without a matching
-step are marked. Generated explanations follow the chosen language, and so do the
-Contracts page labels; the rest of the Recap page's own labels (headings, the blueprint
-inspector) are in English for now.
+step are marked. Generated explanations follow the chosen language, and so do the Recap
+and Contracts pages' own labels, in the app and in the copied Markdown; a few blueprint
+hints and the step labels are in English for now.
 
 Steps are the only part a report must have. A recap, blueprint or contract detail that
 doesn't hold up against the diff (a diagram outside the supported subset, a component or
 label citing a hunk that isn't there) is left out, and Recap says so; the run is never
-lost over it. Files no recap change names are listed under **Other changes**.
+lost over it. Files no recap change names, including generated files and ones not read
+(too many or too large), are listed under **Other changes**.
 
 Older reports remain readable. Regenerate them to add blueprint metadata or contract pages,
 or to replace explanations generated in the wrong language. Source toggles and step links

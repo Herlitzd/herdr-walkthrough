@@ -66,6 +66,3 @@ export function contractStrings(language = 'en') {
   return CONTRACT_TRANSLATIONS[match?.tag ?? fromLocale(value)] ?? CONTRACT_TRANSLATIONS.en;
 }
 
-export const DEFAULT_CONTRACT_LABELS = CONTRACT_TRANSLATIONS.en.kinds;
-export const DEFAULT_COMPATIBILITY_LABELS = CONTRACT_TRANSLATIONS.en.compatibility;
-export const DEFAULT_OPERATION_LABELS = CONTRACT_TRANSLATIONS.en.operations;

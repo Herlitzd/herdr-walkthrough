@@ -20,6 +20,7 @@ import { MODELS, DEFAULT_MODEL, modelOf } from "./lib/job.js";
 import { estimateTokens, codeKey, placeKey, MAX_PROMPT_CHARS } from "./lib/cache.js";
 import { formatComments, addComment, sameSpot } from "./lib/comments.js";
 import { toMarkdown, recapMarkdown } from "./lib/export.js";
+import { recapStrings } from "./lib/recap-language.js";
 import { readKey, hunkRead, isRead, markStep, unmarkStep, mergeRead, changedSince } from "./lib/read.js";
 import { readDiff, readPreferences, matters, keyFor, findShown, preparePrompt, fits, promptChars, jobOf, startJob, alive, finished, cancelJob, finishJob, copyText, postComment, claudeVersion, systemLocale, ensureDirs, loadRead, saveRead, transcriptMessages } from "./engine.js";
 import { button, chip, menu, picker, formatElapsed, formatTokens } from "./ui.js";
@@ -272,11 +273,6 @@ export class Walkthrough {
     return list;
   }
 
-  /** Recap remains the first page, followed by the optional task and contracts. */
-  firstPage() {
-    return 0;
-  }
-
   /** Re-reads the diff and what to show for it. A newer reload wins over an older one still running. */
   async reload(cx) {
     const repo = this.repo;
@@ -507,10 +503,24 @@ export class Walkthrough {
   /** Contract labels are in the report's language, not the picker's: switching it doesn't rewrite a report already written. */
   contractLanguage() { return this.shown?.entry?.language ?? "en"; }
 
-  pages() { return reportPages(this.shown?.entry?.walkthrough, this.view, this.contractLanguage(), { task: Boolean(this.taskView) }); }
+  /**
+   * The report's pages in reading order. Built once per report, view, language
+   * and task, not on every call: a render asks for it once per contents row.
+   */
+  pages() { return this.pageList().pages; }
+
+  pageList() {
+    const walkthrough = this.shown?.entry?.walkthrough, view = this.view, language = this.contractLanguage(), task = Boolean(this.taskView);
+    const m = this.pagesMemo;
+    if (m && m.walkthrough === walkthrough && m.view === view && m.language === language && m.task === task) return m;
+    const pages = reportPages(walkthrough, view, language, { task });
+    const index = new Map();
+    pages.forEach((p, i) => { const key = p.kind === "step" ? `step:${p.step.id}` : p.kind; if (!index.has(key)) index.set(key, i); });
+    return (this.pagesMemo = { walkthrough, view, language, task, pages, index });
+  }
 
   pageIndex(kind, stepId = null) {
-    return this.pages().findIndex((p) => p.kind === kind && (!stepId || p.step?.id === stepId));
+    return this.pageList().index.get(kind === "step" && stepId ? `step:${stepId}` : kind) ?? -1;
   }
 
   go(index) {
@@ -545,7 +555,6 @@ export class Walkthrough {
 
   toggleContractChange(kind, index, cx) {
     const key = `${kind}:${index}`;
-    this.openContractChanges ??= new Set();
     this.openContractChanges.has(key) ? this.openContractChanges.delete(key) : this.openContractChanges.add(key);
     cx.notify();
   }
@@ -560,13 +569,17 @@ export class Walkthrough {
     cx.notify();
   }
 
+  /** The width a report page's content has: the panel less the contents column (when shown) and the page's padding. */
+  contentWidth() {
+    const width = this.width ?? 1000;
+    return Math.max(260, width - (width >= 720 ? 248 : 0) - 48);
+  }
+
   reportPage(t) {
     const page = this.pages()[this.step];
     if (page?.kind === "contract") {
       const contract = page.contract;
-      const ids = new Set(contract.changes.flatMap((c) => c.hunkIds));
-      const found = [];
-      for (const file of this.diff.files) for (const hunk of file.hunks) if (ids.has(hunk.id)) found.push({ file, hunk });
+      const { found, missing } = contractChangeEvidence({ hunkIds: contract.changes.flatMap((c) => c.hunkIds) }, this.diff.files);
       const changeEvidence = contract.changes.map((change) => ({
         ...contractChangeEvidence(change, this.diff.files), targets: contractChangeTargets(this.pages(), change),
       }));
@@ -577,11 +590,11 @@ export class Walkthrough {
         renderChangeSource: (i) => changeEvidence[i].found.length ? this.code(t, changeEvidence[i].found) : null,
         onGoToStep: (i, index, cx) => this.goToContractStep(contract.kind, i, index, cx),
         language: this.contractLanguage(),
-        width: Math.max(260, (this.width ?? 1000) - ((this.width ?? 1000) >= 720 ? 248 : 0) - 48),
+        width: this.contentWidth(),
         sourceOpen: this.openContracts.has(contract.kind),
         onToggleSource: (cx) => { this.openContracts.has(contract.kind) ? this.openContracts.delete(contract.kind) : this.openContracts.add(contract.kind); cx.notify(); },
         source: this.openContracts.has(contract.kind) ? this.code(t, found) : null,
-        missing: ids.size - found.length,
+        missing,
       });
     }
     return page?.kind === "recap" ? this.recap(t) : page?.kind === "task" ? this.taskPage(t) : page?.kind === "step" ? this.page(t, page.step) : this.tail(t);
@@ -599,7 +612,7 @@ export class Walkthrough {
     if (dir > 0 && here) this.setRead({ hunkIds: here.found.map((f) => f.hunk.id) }, true);
     let i = this.step + dir;
     if (this.unreadOnly) while (pages[i]?.kind === "step" && isRead(pages[i].step, this.read)) i += dir;
-    if (i >= this.firstPage()) this.go(i);
+    if (i >= 0) this.go(i);
   }
 
   /** Marks a step's hunks (or any `{ hunkIds }`) read or unread, to be written on the next tick. */
@@ -1228,7 +1241,7 @@ export class Walkthrough {
       .when(this.unreadOnly, (e) => e.child(h_flex().px(8).pt(8).gap(6).items_center().text_size(11).text_color(t.accent)
         .child(div().child("Unread only")).child(div().text_color(t.dim).child("· u shows all"))))
       .child(groupTitle("Overview"))
-      .child(stepRow({ id: "recap", title: "Recap", position: "□" }, 0))
+      .child(stepRow({ id: "recap", title: recapStrings(this.contractLanguage()).recap, position: "□" }, 0))
       .when(Boolean(this.taskView), (e) => {
         const tv = this.taskView;
         return e.child(h_flex().id("toc-task").mt(8).w_full().pl(6).pr(8).py(5).gap(8).items_center().rounded(6).cursor_pointer()
@@ -1310,15 +1323,16 @@ export class Walkthrough {
   /** Recap with a native, local diagram; source remains available on demand. */
   recap(t) {
     const w = this.shown.entry.walkthrough;
-    const available = Math.max(260, (this.width ?? 1000) - ((this.width ?? 1000) >= 720 ? 248 : 0) - 48);
+    const available = this.contentWidth();
     const omitted = (w.omitted?.recap ?? 0) + (w.omitted?.contracts ?? 0);
+    const language = this.contractLanguage(), words = recapStrings(language);
     const changeZoom = (factor, cx) => { this.diagramZoom = Math.max(0.5, Math.min(3, this.diagramZoom * factor)); cx.notify(); };
     return v_flex().id(`recap-${this.shown.entry.generatedAt}`).flex_1().min_h(0).overflow_y_scrollbar().px(22).py(16).gap(10)
-      .child(div().text_size(18).font_semibold().child("Recap"))
+      .child(div().text_size(18).font_semibold().child(words.recap))
       .when(omitted > 0, (e) => e.child(div().text_size(12).text_color(t.dim)
-        .child(`${omitted === 1 ? "One detail" : `${omitted} details`} of the recap, blueprint or contracts didn't match the diff and ${omitted === 1 ? "was" : "were"} left out. Regenerate to try again.`)))
-      .when(Boolean(w.recap?.architecture.description), (e) => e.child(TextView.markdown("architecture-description", "### Architecture\n\n" + w.recap.architecture.description).selectable(true)))
-      .when(Boolean(w.recap) && !w.recap.architecture.mermaid, (e) => e.child(div().text_size(12).text_color(t.dim).child("No blueprint: the model's diagram couldn't be drawn.")))
+        .child(words.leftOut.replace("{count}", String(omitted)))))
+      .when(Boolean(w.recap?.architecture.description), (e) => e.child(TextView.markdown("architecture-description", `### ${words.architecture}\n\n` + w.recap.architecture.description).selectable(true)))
+      .when(Boolean(w.recap) && !w.recap.architecture.mermaid, (e) => e.child(div().text_size(12).text_color(t.dim).child(words.noBlueprint)))
       .when(Boolean(w.recap?.architecture.mermaid), (el) => el
         .child(h_flex().gap(6).items_center()
           .child(button(t, "diagram-minus", "−", (_e, cx) => changeZoom(1 / 1.25, cx), { small: true, tooltip: "Zoom out" }))
@@ -1326,6 +1340,7 @@ export class Walkthrough {
           .child(button(t, "diagram-fit", "Fit", (_e, cx) => { this.diagramZoom = 1; cx.notify(); }, { small: true }))
           .child(button(t, "diagram-source", this.diagramSource ? "Hide Mermaid" : "Mermaid source", (_e, cx) => { this.diagramSource = !this.diagramSource; cx.notify(); }, { small: true, kind: "ghost" })))
         .child(blueprintView(w.recap.architecture, t, {
+          words,
           width: available, zoom: this.diagramZoom, fontFamily: settings().font_family,
           files: this.diff?.files ?? [], selectedId: this.diagramSelected, fileTargets: (path) => this.blueprintTargets(path),
           onSelect: (id, cx) => { this.diagramSelected = id; cx.notify(); },
@@ -1333,7 +1348,7 @@ export class Walkthrough {
           onClose: (cx) => { this.diagramSelected = null; cx.notify(); },
         }))
         .when(this.diagramSource, (e) => e.child(TextView.markdown("mermaid-source", "```mermaid\n" + mermaidWithConnections(w.recap.architecture.mermaid, w.recap.architecture.connections, w.recap.architecture.groups) + "\n```").selectable(true))))
-      .child(TextView.markdown("recap-body", recapMarkdown(w.recap, { diagram: false, architecture: false }).replace("### Recap", "### Changes and motivations")).selectable(true));
+      .child(TextView.markdown("recap-body", recapMarkdown(w.recap, { diagram: false, architecture: false, language }).replace(`### ${words.recap}`, `### ${words.changesAndMotivations}`)).selectable(true));
   }
 
   /** Everything no step covers, file by file, each with the model's one-line note. */

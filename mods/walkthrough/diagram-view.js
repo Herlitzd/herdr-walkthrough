@@ -13,10 +13,26 @@ function mix(a, b, amount) {
   return /** @type {`#${string}`} */ ("#" + x.map((v, i) => Math.round(v + (y[i] - v) * amount).toString(16).padStart(2, "0")).join(""));
 }
 
+/**
+ * The layout depends only on the stored diagram, its labels and boundaries
+ * (with which evidence went missing), never on zoom or selection: it is kept
+ * between renders and redone only when one of those changes.
+ */
+const layouts = new Map();
+function cachedLayout(source, connections, groups) {
+  // The whole input: the layout carries each label's and boundary's fields (reason, missing) through to the drawing.
+  const key = JSON.stringify([source, connections, groups]);
+  if (!layouts.has(key)) {
+    if (layouts.size >= 8) layouts.delete(layouts.keys().next().value);
+    layouts.set(key, layoutDiagram(source, connections, groups));
+  }
+  return layouts.get(key);
+}
+
 /** Native technical drawing. Existing Mermaid reports need no regeneration. */
 export function diagramView(source, t, { width = 700, zoom = 1, fontFamily = "monospace", components = [], connections = [], groups = [], selectedId = null, onSelect = null } = {}) {
   let graph;
-  try { graph = layoutDiagram(source, connections, groups); }
+  try { graph = cachedLayout(source, connections, groups); }
   catch (e) { return div().p(16).text_color(t.blocked).child(`Couldn't render architecture: ${e.message}`); }
   const focus = diagramFocus(graph, selectedId);
   const header = 52;
