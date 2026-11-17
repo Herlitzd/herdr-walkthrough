@@ -8,6 +8,25 @@ change and never judges it.
 
 ![Walkthrough](preview.png)
 
+## Updating it (for the agent doing it)
+
+The walkthrough offers *Update the Walkthrough mod from github.com/dmazlum/herdr-walkthrough
+to its latest release* when a newer release is out. To do it:
+
+1. Find the installed copy: the folder under `~/.config/herdr-app/mods/` whose `mod.json`
+   has `"title": "Walkthrough"` (normally `walkthrough`; a different name if it was renamed
+   because of a clash, and then keep that name). Its `"version"` is the one installed.
+2. Take the latest release's tag from
+   `https://github.com/dmazlum/herdr-walkthrough/releases/latest`, read its notes and every
+   file of `mods/walkthrough` at that tag.
+3. Replace the installed folder with that `mods/walkthrough`, in place: delete it and copy
+   the new one under the same name. Don't add the mod again: an agent never overwrites a
+   mod, so it would add a second copy under a new name.
+4. Run `herdr-app check` on the folder. It must pass.
+5. If the notes say `keys.json` changed, merge it into `~/.config/herdr-app/keys.json`
+   again, keeping the person's own bindings.
+6. Tell the person the version they now have, and what changed from the notes.
+
 ## Recap, blueprint and contracts
 
 The first page is Recap, with a native interactive blueprint. The optional Task page
@@ -371,6 +390,31 @@ A dialog 74% of the window wide and 80% tall (`modal`), on `theme().popover`; as
   `walkthrough.generate`, `.cancel`, `.next`, `.prev`, `.copy`, `.unread`, `.task` (opens the task editor), `.recap`. In the view, `x`
   marks the step read or unread, `u` toggles Unread only, `t` opens the task page and `r` Recap.
 
+## Update check
+
+- Only the open walkthrough checks, when it opens, and at most once a day: one GET to
+  `https://api.github.com/repos/dmazlum/herdr-walkthrough/releases/latest`, with no token
+  and nothing about the person, their repositories or their code. Under `herdr-app check`
+  it doesn't ask.
+- The result is kept in Herdr's shared state under `walkthrough.update` (`checked`,
+  `latest: {tag, url}`, `dismissed`, `off`, `repo`), so it lasts across restarts and every
+  open copy sees it. The time is saved before asking, so two copies don't both ask. A
+  result saved for another repository counts as never checked; `off` holds for any.
+- A release is offered when its tag (`v1.2.3`) is newer than `VERSION` in
+  `lib/update.js`, which must equal `package.json`'s and `mod.json`'s version (a test
+  checks it). A tag of another shape offers nothing until the next day's check; a failed
+  request or no network offers nothing and is tried again an hour later. A saved check
+  time in the future (a clock that was wrong) counts as long ago.
+- The strip, under the header: an "↑" in `accent`, "Walkthrough v0.10.0 is out", "you have
+  0.9.0" in `dim`, a line saying to paste the prompt to the agent, a solid **Copy prompt**
+  (copies it, with a "Copied" notification), and links **What changed** (opens the
+  release's page only if it is on `https://github.com/dmazlum/herdr-walkthrough/`, else
+  the releases page), **Later** (hides that release until a newer one) and **Stop
+  checking** (sets `off` for good). `CHECK = false` in `lib/update.js` turns it off before
+  it ever asks (an update puts it back).
+- A release bumps the version in `package.json`, `mods/walkthrough/mod.json` and
+  `VERSION` in `lib/update.js`.
+
 ## Built from
 
 - `mods/walkthrough/mod.json`: `{ "place": "none", "title": "Walkthrough", "overlay": {
@@ -387,7 +431,8 @@ A dialog 74% of the window wide and 80% tall (`modal`), on `theme().popover`; as
   (`run.sh`, reading the answer), `languages.js`, `comments.js`, `read.js` (read keys,
   `stepRead`, `markStep`/`unmarkStep`, `prune`, `mergeRead`, `changedSince`), `task.js`
   (where a task comes from, transcripts, `resolveTask`, `taskKey`, the transcript listing
-  script).
+  script), `update.js` (the installed `VERSION` and the daily check for a newer release; it
+  takes `shared`, `setShared` and `fetch` as arguments).
 - Git, with `--no-optional-locks -c core.fsmonitor=false -c core.quotePath=false -c
   diff.autoRefreshIndex=false` and `--no-color --no-ext-diff --no-textconv
   --src-prefix=a/ --dst-prefix=b/ -M`: staged `diff --cached`, unstaged `diff` plus every
@@ -412,7 +457,8 @@ A dialog 74% of the window wide and 80% tall (`modal`), on `theme().popover`; as
   changed keys over what is on disk now, so two windows keep each other's marks.
 - `herdr`: `exec`, `hc` (`send`), `readTextFile`, `writeTextFile`, `watchFolder`, `home`,
   `appHome`, `focused`, `panes`, `spaces`, `agents`, `notify`, `shared`/`setShared`,
-  `nextCommand`, `props`, `closeOverlay`, `theme`, `settings().font_family`. Programs run:
+  `nextCommand`, `props`, `closeOverlay`, `theme`, `settings().font_family`, `checking`;
+  and the host's `fetch` for the update check. Programs run:
   `git`, `claude`, `sh`, `env`, `nohup`, `kill`, `mkdir`, `rm`, `ls`, `wc`, `defaults`,
   `stat`, `grep`, `cut`, `tail`.
 - `turnview.js` (the Last turn tab's state, Auto and the hook help), `lib/turns.js` (the

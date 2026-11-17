@@ -9,7 +9,9 @@ import { mermaidWithConnections } from "./lib/diagram.js";
 import { blueprintView } from "./blueprint-view.js";
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, VirtualListScrollHandle, TextView } from "gpui-base";
-import { spaces, panes, focused, agents, theme, props, closeOverlay, hc, exec, nextCommand, settings, shared, setShared, watchFolder } from "herdr";
+import { spaces, panes, focused, agents, theme, props, closeOverlay, hc, exec, nextCommand, settings, shared, setShared, watchFolder, notify } from "herdr";
+import * as herdr from "herdr";
+import { updater, VERSION, PROMPT, RELEASES } from "./lib/update.js";
 import { SCOPES, repoAt, currentHead, defaultBase, baseChoices, recentCommits, pullRequests, sourceKey, commitMessage, taskSince } from "./lib/sources.js";
 import { overlay, fileTotals, overlayAsks, asksOf } from "./lib/walkthrough.js";
 import { TASK_MODES, taskChoice, resolveTask, taskKey, taskCacheKey, clip, MAX_TASK_CHARS } from "./lib/task.js";
@@ -67,6 +69,12 @@ const prefs = () => /** @type {any} */ (shared(PREFS)) ?? {};
 const savePrefs = (change) => setShared(PREFS, { ...prefs(), ...change });
 // Task choices are kept per repository and source; past this many the oldest go.
 const MAX_TASK_CHOICES = 100;
+
+/** Under `herdr-app check` the mod is drawn once and runs nothing: no GitHub request. */
+const checking = () => {
+  try { return typeof herdr.checking === "function" && herdr.checking() === true; }
+  catch { return false; }
+};
 
 /** Each kind of note in its own colour: a decision is not a warning. */
 const noteColor = (t, kind) => ({ choice: t.accent, upkeep: t.ansi6 ?? t.accent, gap: t.ansi3, divergence: t.ansi5 ?? t.ansi3, untested: t.blocked }[kind] ?? t.muted);
@@ -190,6 +198,9 @@ export class Walkthrough {
       await autoGenerate(this, cx, this.turn); // the turn the tab shows: this terminal's newest, else the newest
     });
     cx.timer.every(1000, (cx) => this.tick(cx));
+    // A newer release, at most once a day (lib/update.js); not under `herdr-app check`, which runs nothing.
+    this.update = updater({ shared, setShared, fetch });
+    if (!checking()) cx.spawn(async (cx) => { await this.update.check(); cx.notify(); });
     // Commands for keys.json: walkthrough.generate, .cancel, .next, .prev, .copy, .unread, .task, .recap (write your own).
     cx.spawn(async (cx) => {
       for (;;) {
@@ -860,6 +871,7 @@ export class Walkthrough {
       .on_size_change((size, cx) => { if (Math.abs((this.width ?? 0) - size.width) > 1) { this.width = size.width; cx.notify(); } })
       .size_full().bg(inDialog ? t.popover : t.background).text_color(t.foreground).text_size(13)
       .child(this.header(t, inDialog))
+      .when(Boolean(this.update?.available()), (el) => el.child(this.updateStrip(t, this.update.available())))
       .child(this.toolbar(t))
       .when(this.editingTask, (el) => el.child(this.taskEditor(t)))
       .child(div().flex_1().min_h(0).relative()
@@ -890,6 +902,28 @@ export class Walkthrough {
       .when(this.loading, (el) => el.child(div().text_size(11).text_color(t.dim).frames(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"], 90)))
       .child(action)
       .when(inDialog, (el) => el.child(button(t, "close", "Esc", () => closeOverlay(props().overlay), { kind: "ghost", small: true })));
+  }
+
+  /**
+   * A newer release, when there is one: the prompt to hand the agent, since an
+   * added mod can't update itself (see lib/update.js).
+   */
+  updateStrip(t, latest) {
+    const link = (id, label, onClick, color = t.muted) => div().id(id).flex_none().text_size(11.5).text_color(color).cursor_pointer()
+      .hover((s) => s.text_color(t.foreground)).on_click(onClick).child(label);
+    return h_flex().id("update-strip").flex_none().mx(14).mt(10).px(12).py(8).gap(10).items_center().flex_wrap().rounded(10)
+      .border_1().border_color(t.accent + "40").bg(t.accent + "12")
+      .child(div().flex_none().size(20).rounded_full().bg(t.accent + "29").flex().items_center().justify_center().text_size(11).text_color(t.accent).child("↑"))
+      .child(div().flex_none().text_size(12.5).font_semibold().child(`Walkthrough ${latest.tag} is out`))
+      .child(div().flex_none().text_size(11.5).text_color(t.dim).child(`you have ${VERSION}`))
+      .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.muted).child("Paste the prompt to your agent to update."))
+      .child(button(t, "update-copy", "Copy prompt", (_e, cx) => {
+        cx.write_to_clipboard(PROMPT);
+        notify({ title: "Copied", body: PROMPT, level: "success", timeout: 2500 });
+      }, { kind: "solid", small: true, tooltip: PROMPT }))
+      .child(link("update-notes", "What changed", (_e, cx) => cx.open_url(latest.url ?? RELEASES), t.accent))
+      .child(link("update-later", "Later", (_e, cx) => { this.update.dismiss(latest.tag); cx.notify(); }))
+      .child(link("update-stop", "Stop checking", (_e, cx) => { this.update.stop(); cx.notify(); }));
   }
 
   /** What to read (the scope, and which one of it) on the left; how it is written on the right. Wraps when narrow. */
