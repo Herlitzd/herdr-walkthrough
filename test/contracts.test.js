@@ -31,22 +31,30 @@ test('Recap remains first, contracts precede steps and do not consume their anch
   assert.deepEqual(pages[4].step.hunkIds,['api-hunk']);
   assert.deepEqual(reportPages(w,null),[]);
 });
-test('imaginary anchors, duplicate/unknown kinds and empty assessments are refused', () => {
-  for(const change of [
-    (p)=>{p[0].changes[0].hunks=['h99'];},
-    (p)=>{p[0].kind='api';},
-    (p)=>{p[0].kind='graphql';},
-    (p)=>{p[0].changes=[];},
-    (p)=>{p[0].impact='';},
-    (p)=>{p[0].rollout=[''];},
-    (p)=>{p[0].compatibility='safe';},
-  ]) {const p=clone(); change(p); assert.throws(()=>norm(p),/Schema\/API/);}
+const kept = (p) => { const omit = { count: 0 }; return { kinds: normalizeContracts(p, ids, files, omit).map((x) => x.kind), omitted: omit.count }; };
+test('imaginary anchors, duplicate/unknown kinds and empty assessments are left out and counted', () => {
+  for (const [change, kinds, omitted] of [
+    [(p)=>{p[0].changes[0].hunks=['h99'];}, ['protobuf','api'], 2], // the change, then its empty page
+    [(p)=>{p[0].kind='api';}, ['protobuf','api'], 1],
+    [(p)=>{p[0].kind='graphql';}, ['protobuf','api'], 1],
+    [(p)=>{p[0].changes=[];}, ['protobuf','api'], 1],
+    [(p)=>{p[0].impact='';}, ['protobuf','api'], 1],
+  ]) {const p=clone(); change(p); assert.deepEqual(kept(p), { kinds, omitted });}
+  // Repairable details are repaired, not refused.
+  const p=clone(); p[0].rollout=['', ' Step ']; p[0].compatibility='safe'; p[0].changes[0].hunks=['[h1]'];
+  const page=norm(p)[0];
+  assert.deepEqual(page.rollout,['Step']); assert.equal(page.compatibility,'unknown'); assert.deepEqual(page.changes[0].hunkIds,['sql-hunk']);
+  assert.deepEqual(kept('nope'), { kinds: [], omitted: 1 });
+  // One bad change leaves the page's other changes standing.
+  const q=clone(); q[0].changes.push({ ...q[0].changes[0], name: 'orders.note', hunks: ['h99'] });
+  assert.equal(norm(q)[0].changes.length, 1);
 });
-test('added, removed and modified states cannot contradict their operation', () => {
+test('a state the operation rules out is cleared; a missing state the operation needs drops the change', () => {
   const p=clone().slice(0,1), c=p[0].changes[0];
-  c.operation='added'; assert.throws(()=>norm(p)); c.before=''; assert.equal(norm(p)[0].changes[0].before,'');
-  c.operation='removed'; assert.throws(()=>norm(p)); c.before='old';c.after='';assert.equal(norm(p)[0].changes[0].after,'');
-  c.operation='modified';assert.throws(()=>norm(p));
+  c.operation='added'; c.before='(none)'; assert.equal(norm(p)[0].changes[0].before,''); assert.equal(norm(p)[0].changes[0].after,c.after);
+  c.operation='removed'; c.before='old'; c.after='(none)'; assert.equal(norm(p)[0].changes[0].after,''); assert.equal(norm(p)[0].changes[0].before,'old');
+  c.operation='modified'; c.after=''; assert.deepEqual(kept(p), { kinds: [], omitted: 2 });
+  c.after='new'; c.before=''; assert.deepEqual(kept(p), { kinds: [], omitted: 2 });
 });
 test('Markdown includes comparisons and evidence before code steps with honest unknown rollout', () => {
   const w=normalize(raw(),ids,files),md=toMarkdown(overlay(w,[]),w,{language:"pl"});

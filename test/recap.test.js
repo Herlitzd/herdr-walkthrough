@@ -27,24 +27,61 @@ test("new reports require a structured recap and normalization preserves complet
   assert.ok(md.includes('```mermaid\n' + recap().architecture.mermaid + '\n```'));
 });
 
-test("recap cannot silently omit supporting or generated files", () => {
+test("files no recap change names are listed under Other changes, never failing the report", () => {
   const r = raw(); r.recap.changes.pop();
-  assert.throws(() => norm(r), /omitted changed files/);
+  const w = norm(r);
+  assert.deepEqual(w.recap.other, ["lock.json"]);
+  assert.match(recapMarkdown(w.recap), /\*\*Other changes:\*\* `lock.json`/);
+  assert.equal(w.omitted, undefined, "an uncovered file is listed, not a left-out detail");
 });
 
-test("recap rejects missing rationale, imaginary file anchors and empty architecture", () => {
-  for (const mutate of [
-    (r) => { r.recap.changes[0].motivation = ""; },
-    (r) => { r.recap.changes[0].paths = ["invented.js"]; },
-    (r) => { r.recap.architecture.description = ""; },
-    (r) => { r.recap.architecture.mermaid = ""; },
-  ]) { const r = raw(); mutate(r); assert.throws(() => norm(r)); }
+test("a recap change without rationale or real files is left out and counted; a bad diagram drops only the blueprint", () => {
+  for (const [mutate, check] of [
+    [(r) => { r.recap.changes[0].motivation = ""; }, (w) => { assert.equal(w.recap.changes.length, 1); assert.deepEqual(w.recap.other, ["src/a.js", "test/a.js"]); assert.deepEqual(w.omitted, { recap: 1, contracts: 0 }); }],
+    [(r) => { r.recap.changes[0].paths = ["invented.js"]; }, (w) => { assert.equal(w.recap.changes.length, 1); assert.deepEqual(w.omitted, { recap: 1, contracts: 0 }); }],
+    [(r) => { r.recap.architecture.description = ""; }, (w) => { assert.equal(w.recap.architecture.description, ""); assert.doesNotMatch(recapMarkdown(w.recap), /#### Architecture/); assert.equal(w.omitted, undefined); }],
+    [(r) => { r.recap.architecture.mermaid = ""; }, (w) => { assert.equal(w.recap.architecture.mermaid, ""); assert.doesNotMatch(recapMarkdown(w.recap), /```mermaid/); assert.deepEqual(w.omitted, { recap: 1, contracts: 0 }); }],
+  ]) { const r = raw(); mutate(r); const w = norm(r); check(w); assert.equal(w.parts.length, 1, "steps survive"); }
 });
 
-test("Mermaid subset handles isolated nodes and cycles, rejects invalid or active content", () => {
-  validateMermaid('flowchart LR\nA["Documentation"]');
-  validateMermaid('flowchart TB\nA["A"]\nB["B"]\nA --> B\nB --> A');
-  for (const s of ['graph TB', 'flowchart TB\nA --> B', 'flowchart TB\nA["A"]\nclick A "https://x"', 'flowchart TB\nA["<script>"]', 'flowchart TB\nA["A"]\nA["B"]', 'flowchart TB\n```']) assert.throws(() => validateMermaid(s));
+test("realistic model slips degrade the blueprint or contracts, never the whole report", () => {
+  const files = [{ path: "src/a.js", status: "modified", aliases: ["h1"] }, { path: "src/b.js", status: "added", aliases: ["h2"] }];
+  const aliases = { h1: "id1", h2: "id2" };
+  const good = () => ({
+    title: "T", summary: "S", skipped: [],
+    parts: [{ title: "P", blurb: "", steps: [{ title: "S", text: "x", hunks: ["h1", "h2"], weight: "key", notes: [] }] }],
+    recap: { changes: [{ description: "d", motivation: "m", paths: ["src/a.js", "src/b.js"] }], architecture: {
+      description: "Caller uses queue.", mermaid: 'flowchart TD\nA["Caller"]\nB["Queue"]\nA --> B',
+      components: [
+        { id: "A", status: "modified", responsibility: "Calls.", change: "Uses B.", paths: ["src/a.js"], hunks: ["h1"] },
+        { id: "B", status: "added", responsibility: "Queues.", change: "New.", paths: ["src/b.js"], hunks: ["h2"] },
+      ],
+      connections: [{ from: "A", to: "B", label: "enqueues", hunks: ["h1"] }],
+      groups: [{ id: "Core", title: "Core", nodes: ["A", "B"], reason: "One module.", hunks: ["h1", "h2"] }],
+    } },
+    contracts: [{ kind: "api", title: "t", summary: "s", compatibility: "additive", impact: "i", rollout: [],
+      changes: [{ name: "GET /q", operation: "modified", before: "a", after: "b", detail: "d", hunks: ["h1"] }] }],
+  });
+  const n = (r) => normalize(r, aliases, files);
+  const clean = n(good());
+  assert.equal(clean.omitted, undefined);
+  for (const [name, mutate, expect] of [
+    ["flowchart TD; (trailing semicolon)", (r) => { r.recap.architecture.mermaid = r.recap.architecture.mermaid.replace("TD", "TD;"); }, { same: true }],
+    ["unquoted node label A[A]", (r) => { r.recap.architecture.mermaid = r.recap.architecture.mermaid.replace('A["Caller"]', "A[Caller]"); }, { same: true }],
+    ["A-->B without spaces", (r) => { r.recap.architecture.mermaid = r.recap.architecture.mermaid.replace("A --> B", "A-->B"); }, { same: true }],
+    ["recap changes miss one file", (r) => { r.recap.changes[0].paths = ["src/a.js"]; }, { other: ["src/b.js"] }],
+    ["component hunk written as [h1]", (r) => { r.recap.architecture.components[0].hunks = ["[h1]"]; }, { same: true }],
+    ["a group member without matching evidence", (r) => { r.recap.architecture.groups[0].hunks = ["h1"]; }, { omitted: 1 }],
+    ["contract added with before (none)", (r) => { Object.assign(r.contracts[0].changes[0], { operation: "added", before: "(none)" }); }, { contracts: 1 }],
+  ]) {
+    const r = good(); mutate(r);
+    const w = n(r);
+    assert.equal(w.parts.length, 1, name);
+    if (expect.same) assert.deepEqual(w.recap, clean.recap, name);
+    if (expect.other) assert.deepEqual(w.recap.other, expect.other, name);
+    if (expect.omitted) assert.equal(w.omitted.recap, expect.omitted, name);
+    if (expect.contracts) assert.equal(w.contracts.length, expect.contracts, name);
+  }
 });
 
 test("legacy saved reports remain readable and recap page offers regeneration", () => {

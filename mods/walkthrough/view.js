@@ -183,7 +183,7 @@ export class Walkthrough {
       await autoGenerate(this, cx, this.turn); // the turn the tab shows: this terminal's newest, else the newest
     });
     cx.timer.every(1000, (cx) => this.tick(cx));
-    // Commands for keys.json: walkthrough.generate, .cancel, .next, .prev, .copy, .unread, .task (write your own).
+    // Commands for keys.json: walkthrough.generate, .cancel, .next, .prev, .copy, .unread, .task, .recap (write your own).
     cx.spawn(async (cx) => {
       for (;;) {
         const name = String(await nextCommand()).replace(/^walkthrough\./, "").split(":")[0];
@@ -319,9 +319,9 @@ export class Walkthrough {
         // With nothing changed there is nothing to walk through: the last walkthrough shown here isn't offered (nor its footer, nor Copy).
         this.view = shown && diff.files.length ? overlay(shown.entry.walkthrough, diff.files) : null;
         this.taskView = this.view ? overlayAsks(shown.entry.walkthrough.asks, this.view) : null;
-        // Another report opens on Recap; persistent hunk marks survive the new reading path.
+        // Another report is another reading path; persistent hunk marks survive it.
         if (before !== shown?.entry?.key + String(shown?.entry?.generatedAt)) {
-          this.step = 0;
+          this.step = this.openingPage();
           this.diagramZoom = 1;
           this.diagramSource = false;
           this.diagramSelected = null;
@@ -498,7 +498,14 @@ export class Walkthrough {
     cx.notify();
   }
 
-  contractLanguage() { return this.language ?? this.shown?.entry?.language ?? "en"; }
+  /** Where a report opens: Recap while none of it is read yet, else where the reader left off, its first step not read. */
+  openingPage() {
+    if (!this.view?.steps.some((st) => isRead(st, this.read))) return 0;
+    return Math.max(0, this.pages().findIndex((p) => p.kind === "step" && !isRead(p.step, this.read)));
+  }
+
+  /** Contract labels are in the report's language, not the picker's: switching it doesn't rewrite a report already written. */
+  contractLanguage() { return this.shown?.entry?.language ?? "en"; }
 
   pages() { return reportPages(this.shown?.entry?.walkthrough, this.view, this.contractLanguage(), { task: Boolean(this.taskView) }); }
 
@@ -819,6 +826,7 @@ export class Walkthrough {
     else if (this.view && k === "x") this.toggleRead();
     else if (this.view && k === "u") this.unreadOnly = !this.unreadOnly;
     else if (this.taskView && k === "t") this.go(this.pageIndex("task"));
+    else if (this.view && k === "r") this.go(0);
     else return;
     cx.notify();
   }
@@ -1303,11 +1311,15 @@ export class Walkthrough {
   recap(t) {
     const w = this.shown.entry.walkthrough;
     const available = Math.max(260, (this.width ?? 1000) - ((this.width ?? 1000) >= 720 ? 248 : 0) - 48);
+    const omitted = (w.omitted?.recap ?? 0) + (w.omitted?.contracts ?? 0);
     const changeZoom = (factor, cx) => { this.diagramZoom = Math.max(0.5, Math.min(3, this.diagramZoom * factor)); cx.notify(); };
     return v_flex().id(`recap-${this.shown.entry.generatedAt}`).flex_1().min_h(0).overflow_y_scrollbar().px(22).py(16).gap(10)
       .child(div().text_size(18).font_semibold().child("Recap"))
-      .when(Boolean(w.recap), (e) => e.child(TextView.markdown("architecture-description", "### Architecture\n\n" + w.recap.architecture.description).selectable(true)))
-      .when(Boolean(w.recap), (el) => el
+      .when(omitted > 0, (e) => e.child(div().text_size(12).text_color(t.dim)
+        .child(`${omitted === 1 ? "One detail" : `${omitted} details`} of the recap, blueprint or contracts didn't match the diff and ${omitted === 1 ? "was" : "were"} left out. Regenerate to try again.`)))
+      .when(Boolean(w.recap?.architecture.description), (e) => e.child(TextView.markdown("architecture-description", "### Architecture\n\n" + w.recap.architecture.description).selectable(true)))
+      .when(Boolean(w.recap) && !w.recap.architecture.mermaid, (e) => e.child(div().text_size(12).text_color(t.dim).child("No blueprint: the model's diagram couldn't be drawn.")))
+      .when(Boolean(w.recap?.architecture.mermaid), (el) => el
         .child(h_flex().gap(6).items_center()
           .child(button(t, "diagram-minus", "−", (_e, cx) => changeZoom(1 / 1.25, cx), { small: true, tooltip: "Zoom out" }))
           .child(button(t, "diagram-plus", "+", (_e, cx) => changeZoom(1.25, cx), { small: true, tooltip: "Zoom in" }))

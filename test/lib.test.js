@@ -294,7 +294,7 @@ test("cache keys change with the code, model and language", () => {
   assert.notEqual(codeKey(d.files), codeKey(buildDigest([{ scope: "working", patch: PATCH.replace("+new", "+x") }]).files));
   assert.equal(k, cacheKey({ ...base, preferences: "  " }));
   assert.notEqual(placeKey("/r", "staged"), placeKey("/r", "unstaged"));
-  assert.equal(deadline(10), 130_000);
+  assert.equal(deadline(10), 260_000);
   assert.equal(deadline(10_000), 900_000);
 });
 

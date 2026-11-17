@@ -2,7 +2,8 @@ import { CONTRACT_SCHEMA, normalizeContracts } from "./contracts.js";
 import { COMPONENT_SCHEMA, normalizeComponents } from "./blueprint.js";
 import { CONNECTION_SCHEMA, normalizeConnections } from "./connections.js";
 import { GROUP_SCHEMA, normalizeGroups } from "./groups.js";
-import { parseMermaid } from "./diagram.js";
+import { parseMermaid, canonicalMermaid } from "./diagram.js";
+import { idOf } from "./alias.js";
 
 // The walkthrough's shape, how a model's answer is made safe, and how a stored
 // walkthrough is laid over the diff as it is now.
@@ -13,7 +14,7 @@ import { parseMermaid } from "./diagram.js";
 
 export const VERSION = 1;
 // Part of every cache key: a different prompt writes a different walkthrough.
-export const PROMPT_VERSION = 8;
+export const PROMPT_VERSION = 2;
 
 export const LIMITS = { parts: 6, steps: 16, hunksPerStep: 14, partTitle: 28, notes: 6, notesPerStep: 2, skipped: 200, asks: 12, askText: 200 };
 export const WEIGHTS = ["key", "normal", "skim"];
@@ -117,9 +118,6 @@ const text = (value, max = 0) => {
 
 const fail = (message) => Object.assign(new Error(message), { code: "invalid" });
 
-/** The hunk id an alias the model wrote ("h3", "[h3]") stands for, or undefined. */
-const idOf = (idByAlias, alias) => idByAlias[typeof alias === "string" ? alias.trim().replace(/^\[|\]$/g, "") : ""];
-
 /**
  * A model's answer → a walkthrough whose steps hold real hunk ids.
  * @param {any} raw the parsed answer
@@ -187,33 +185,57 @@ export function normalize(raw, idByAlias, digestFiles = [], { asks: withTask = f
     skipped.push({ path, note });
   }
 
+  // Steps are the only part an answer must have. A recap, blueprint or contract
+  // detail that doesn't hold up is left out and counted, never failing the run.
   const recap = normalizeRecap(raw.recap, digestFiles, idByAlias);
-  const contracts = normalizeContracts(raw.contracts, idByAlias, digestFiles);
+  const contractOmit = { count: 0 };
+  const contracts = normalizeContracts(raw.contracts, idByAlias, digestFiles, contractOmit);
   const asks = withTask ? normalizeAsks(raw.asks, idByAlias) : null;
-  return { recap, contracts, asks, title: text(raw.title, 140) || "Walkthrough", summary: text(raw.summary), parts, skipped, dropped };
+  const omitted = { recap: recap?.omitted ?? 0, contracts: contractOmit.count };
+  return {
+    recap, contracts, asks, title: text(raw.title, 140) || "Walkthrough", summary: text(raw.summary), parts, skipped, dropped,
+    ...(omitted.recap || omitted.contracts ? { omitted } : {}),
+  };
 }
 
-/** Legacy reports stay readable; new structured recaps must be complete. */
+/**
+ * The recap: what changed and why, and the architecture it lands in. Every
+ * part is checked against the digest, and what doesn't hold up is left out and
+ * counted in `omitted` (absent when nothing was): a change without its reason
+ * or real files, a diagram outside the drawn subset (the blueprint then goes
+ * with it, the description stays), a component, label or boundary without
+ * evidence. Files no change names are listed under `other`, never lost.
+ */
 function normalizeRecap(raw, files, idByAlias) {
-  if (raw === undefined) return null;
+  // None at all reads as a report from before recaps: the page offers to regenerate.
+  if (!raw || typeof raw !== "object") return null;
+  const omit = { count: 0 };
   const known = new Set(files.map((f) => f.path));
   const changes = [];
   for (const c of Array.isArray(raw?.changes) ? raw.changes : []) {
     const description = text(c?.description), motivation = text(c?.motivation);
-    const paths = [...new Set((Array.isArray(c?.paths) ? c.paths : []).filter((p) => known.has(p)))];
-    if (!description || !motivation || !paths.length) throw fail("Recap changes need descriptions, motivations and real file paths.");
+    const paths = [...new Set((Array.isArray(c?.paths) ? c.paths : []).map((p) => text(p)).filter((p) => known.has(p)))];
+    if (!description || !motivation || !paths.length) { omit.count++; continue; }
     changes.push({ description, motivation, paths });
   }
-  const description = text(raw?.architecture?.description);
-  const mermaid = text(raw?.architecture?.mermaid);
   const covered = new Set(changes.flatMap((c) => c.paths));
-  if ([...known].some((path) => !covered.has(path))) throw fail("Recap omitted changed files. Regenerate for complete coverage.");
-  if (!changes.length || !description) throw fail("Recap needs changes and an architecture description.");
-  validateMermaid(mermaid);
-  const components = normalizeComponents(raw?.architecture?.components, mermaid, idByAlias, files);
-  const connections = normalizeConnections(raw?.architecture?.connections, mermaid, idByAlias, files);
-  const groups = normalizeGroups(raw?.architecture?.groups, mermaid, components, idByAlias, files);
-  return { changes, architecture: { description, mermaid, ...(components === undefined ? {} : { components }), ...(connections === undefined ? {} : { connections }), ...(groups === undefined ? {} : { groups }) } };
+  const other = [...known].filter((path) => !covered.has(path));
+  const rawArchitecture = raw?.architecture;
+  const architecture = { description: text(rawArchitecture?.description), mermaid: "" };
+  try {
+    architecture.mermaid = canonicalMermaid(rawArchitecture?.mermaid);
+  } catch {
+    omit.count++;
+  }
+  if (architecture.mermaid) {
+    const components = normalizeComponents(rawArchitecture?.components, architecture.mermaid, idByAlias, files, omit);
+    const connections = normalizeConnections(rawArchitecture?.connections, architecture.mermaid, idByAlias, files, omit);
+    const groups = normalizeGroups(rawArchitecture?.groups, architecture.mermaid, components, idByAlias, files, omit);
+    if (components !== undefined) architecture.components = components;
+    if (connections !== undefined) architecture.connections = connections;
+    if (groups !== undefined) architecture.groups = groups;
+  }
+  return { changes, ...(other.length ? { other } : {}), architecture, ...(omit.count ? { omitted: omit.count } : {}) };
 }
 
 /** A deliberately small, portable Mermaid flowchart subset. */

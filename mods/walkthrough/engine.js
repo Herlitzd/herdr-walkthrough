@@ -320,8 +320,6 @@ export async function finishJob(job) {
   try {
     const { raw, cost } = readOutcome({ out: await read("out.json"), err: await read("err.txt"), code: job.code });
     const walkthrough = normalize(raw, job.meta.idByAlias, job.meta.digestFiles, { asks: Boolean(job.meta.task) });
-    if (!Array.isArray(raw.contracts)) throw new Error("The generated report omitted the Schema/API assessment. Regenerate it.");
-    if (!walkthrough.recap) throw new Error("The generated report has no recap. Regenerate to include changes, motivations and architecture.");
     const { key, model, language, top, source, sk } = job.meta;
     // `before`: the hunks of the walkthrough shown when this one was asked for, to tell what changed since it was read.
     const entry = { version: VERSION, key, code: job.meta.code, model, language, top, source, sk, generatedAt: Date.now(), took: Date.now() - job.meta.started, cost, walkthrough, before: job.meta.before ?? [], task: job.meta.task ?? null };

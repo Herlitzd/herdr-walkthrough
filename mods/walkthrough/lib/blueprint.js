@@ -1,4 +1,5 @@
 import { parseMermaid } from "./diagram.js";
+import { filesByAlias, resolveHunks } from "./alias.js";
 
 export const COMPONENT_LABELS = { added: "Added", modified: "Modified", context: "Context" };
 const str = { type: "string" };
@@ -14,38 +15,36 @@ export const COMPONENT_SCHEMA = {
     },
   },
 };
-const fail = (message) => { throw Object.assign(new Error(`Blueprint: ${message}`), { code: "invalid" }); };
 const text = (v) => typeof v === "string" ? v.trim() : "";
 
-/** Exact node identities and source anchors, never filename/label heuristics. */
-export function normalizeComponents(raw, mermaid, aliases, files) {
+/**
+ * Exact node identities and source anchors, never filename/label heuristics.
+ * Forgiving like steps: a component that doesn't hold up against the diagram
+ * or the digest is left out and counted in `omit.count`, never failing the
+ * report. Its node is still drawn, without details. Paths follow the hunks
+ * cited, so a component's files are always the ones its evidence is in.
+ */
+export function normalizeComponents(raw, mermaid, aliases, files, omit = { count: 0 }) {
   if (raw === undefined) return undefined; // Older reports retain an unclassified diagram.
-  const nodes = parseMermaid(mermaid).nodes;
-  if (!Array.isArray(raw) || raw.length !== nodes.length) fail("each diagram node needs exactly one component.");
-  const ids = new Set(nodes.map((n) => n.id)), seen = new Set();
-  const fileByAlias = new Map();
-  for (const f of files) for (const a of f.aliases) fileByAlias.set(a, f);
-  return raw.map((c) => {
-    const id = text(c?.id), responsibility = text(c?.responsibility), change = text(c?.change);
-    if (!ids.has(id) || seen.has(id)) fail("unknown or duplicate component ID.");
+  if (!Array.isArray(raw)) { omit.count++; return []; }
+  const ids = new Set(parseMermaid(mermaid).nodes.map((n) => n.id)), seen = new Set();
+  const fileByAlias = filesByAlias(files);
+  const out = [];
+  for (const c of raw) {
+    const id = text(c?.id), responsibility = text(c?.responsibility);
+    let status = c?.status, change = text(c?.change);
+    if (!ids.has(id) || seen.has(id) || !Object.hasOwn(COMPONENT_LABELS, status) || !responsibility) { omit.count++; continue; }
+    // A component in the resulting architecture is shown by code that remains.
+    const hits = status === "context" ? [] : resolveHunks(c.hunks, aliases, fileByAlias, (f) => f.status !== "deleted");
+    if (status !== "context" && !hits.length) { omit.count++; continue; }
+    // Added means every file it is shown in is new; any other evidence makes it Modified.
+    if (status === "added" && hits.some((h) => h.file.status !== "added")) status = "modified";
+    // Context is what the diff doesn't touch: it claims no change and no files.
+    if (status === "context") change = "";
     seen.add(id);
-    if (!Object.hasOwn(COMPONENT_LABELS, c.status) || !responsibility) fail("a component needs a valid status and responsibility.");
-    if (!Array.isArray(c.paths) || !Array.isArray(c.hunks)) fail("paths and hunks must be arrays.");
-    const paths = [...new Set(c.paths)], hunks = [...new Set(c.hunks)];
-    if (c.status === "context") {
-      if (paths.length || hunks.length || change) fail("context must not claim source changes.");
-    } else {
-      if (!paths.length || !hunks.length || !change) fail("changed components need a change and source evidence.");
-      for (const alias of hunks) {
-        const file = fileByAlias.get(alias);
-        if (!file || !Object.hasOwn(aliases, alias) || !aliases[alias] || !paths.includes(file.path)) fail("hunk must belong to a declared real file.");
-        if (c.status === "added" && file.status !== "added") fail("Added requires evidence from newly added source files; use Modified otherwise.");
-        if (file.status === "deleted") fail("a component in the resulting architecture cannot reference only deleted source.");
-      }
-      for (const path of paths) if (!hunks.some((a) => fileByAlias.get(a)?.path === path)) fail("every file needs a supporting hunk.");
-    }
-    return { id, status: c.status, responsibility, change, paths, hunkIds: [...new Set(hunks.map((a) => aliases[a]))] };
-  });
+    out.push({ id, status, responsibility, change, paths: [...new Set(hits.map((h) => h.file.path))], hunkIds: hits.map((h) => h.id) });
+  }
+  return out;
 }
 
 /** Resolve saved anchors against the current diff, including staged/working copies. */

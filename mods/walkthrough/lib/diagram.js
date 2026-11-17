@@ -2,32 +2,66 @@
 // Pure geometry: shared by native UI and tests, with no network or file writes.
 const invalid = () => { throw Object.assign(new Error("Architecture must be a plain Mermaid flowchart with declared nodes and edges."), { code: "invalid" }); };
 
+const ID = "[A-Za-z][A-Za-z0-9_]*";
+const NODE = new RegExp(`^(${ID})\\s*\\[(.+)\\]$`);
+const EDGE = new RegExp(`^(${ID})\\s*-->\\s*(?:\\|(.*?)\\|\\s*)?(${ID})$`);
+const GROUP = new RegExp(`^subgraph\\s+(${ID})(?:\\s*\\[(.+)\\])?$`);
+
+/** A label as written, quoted or not; null when it holds what a renderer could misread. */
+function labelOf(inner, extra = "") {
+  const s = String(inner ?? "").trim();
+  const quoted = /^"(.*)"$/.exec(s);
+  const body = quoted ? quoted[1] : s;
+  const bad = new RegExp(`["<>\`\\\\${extra}${quoted ? "" : "\\[\\]"}]`);
+  return body.trim() && !bad.test(body) ? body : null;
+}
+
+/**
+ * The plain flowchart subset Walkthrough draws. It forgives how models often
+ * spell it (`graph`, `TD;`, `A-->B`, unquoted `A[Label]`, `%%` comments) and
+ * still refuses anything else, such as `click`, styles or HTML in a label.
+ */
 export function parseMermaid(source) {
-  const lines = String(source ?? "").split("\n").map((s) => s.trim()).filter(Boolean);
-  const header = /^flowchart (TB|TD|LR)$/.exec(lines.shift() ?? "");
+  const lines = String(source ?? "").split("\n")
+    .map((s) => s.trim().replace(/;+$/, "").trim())
+    .filter((s) => s && !s.startsWith("%%"));
+  const header = /^(?:flowchart|graph) (TB|TD|LR)$/.exec((lines.shift() ?? "").replace(/\s+/g, " "));
   if (!header) invalid();
   const nodes = [], edges = [], ids = new Set(), groups = [], groupIds = new Set();
   let activeGroup = null;
   for (const line of lines) {
-    const node = /^([A-Za-z][A-Za-z0-9_]*)\["([^"<>`\\]+)"\]$/.exec(line);
-    const edge = /^([A-Za-z][A-Za-z0-9_]*) -->(?:\|"([^"<>`|\\]+)"\|)? ([A-Za-z][A-Za-z0-9_]*)$/.exec(line);
-    const group = /^subgraph ([A-Za-z][A-Za-z0-9_]*)\["([^"<>`|\\]+)"\]$/.exec(line);
+    const group = GROUP.exec(line), node = NODE.exec(line), edge = EDGE.exec(line);
     if (group) {
-      if (activeGroup || groupIds.has(group[1]) || ids.has(group[1])) invalid();
-      activeGroup = { id: group[1], title: group[2], nodes: [] };
+      const title = group[2] === undefined ? group[1] : labelOf(group[2], "|");
+      if (title === null || activeGroup || groupIds.has(group[1]) || ids.has(group[1])) invalid();
+      activeGroup = { id: group[1], title, nodes: [] };
       groupIds.add(group[1]); groups.push(activeGroup);
     } else if (line === "end") {
       if (!activeGroup || !activeGroup.nodes.length) invalid();
       activeGroup = null;
     } else if (node) {
-      if (ids.has(node[1]) || groupIds.has(node[1])) invalid();
-      ids.add(node[1]); nodes.push({ id: node[1], label: node[2] });
+      const label = labelOf(node[2]);
+      if (label === null || ids.has(node[1]) || groupIds.has(node[1])) invalid();
+      ids.add(node[1]); nodes.push({ id: node[1], label });
       if (activeGroup) activeGroup.nodes.push(node[1]);
-    } else if (edge && !activeGroup) edges.push({ from: edge[1], to: edge[3], ...(edge[2] ? { label: edge[2] } : {}) });
-    else invalid();
+    } else if (edge && !activeGroup) {
+      const label = edge[2] === undefined ? undefined : labelOf(edge[2], "|");
+      if (label === null) invalid();
+      edges.push({ from: edge[1], to: edge[3], ...(label ? { label } : {}) });
+    } else invalid();
   }
   if (activeGroup || !nodes.length || edges.some((e) => !ids.has(e.from) || !ids.has(e.to))) invalid();
   return { direction: header[1] === "LR" ? "LR" : "TB", nodes, edges, ...(groups.length ? { groups } : {}) };
+}
+
+/**
+ * The diagram as stored: declared nodes and plain edges in one spelling. Edge
+ * labels and boundaries are left out, since only the source-backed connections
+ * and groups beside it may draw them. Throws when the source isn't the subset.
+ */
+export function canonicalMermaid(source) {
+  const graph = parseMermaid(source);
+  return [`flowchart ${graph.direction}`, ...graph.nodes.map((n) => `${n.id}["${n.label}"]`), ...graph.edges.map((e) => `${e.from} --> ${e.to}`)].join("\n");
 }
 
 /** Wrap labels without removing text, including long identifiers. */

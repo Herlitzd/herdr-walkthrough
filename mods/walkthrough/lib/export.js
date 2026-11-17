@@ -29,8 +29,9 @@ export function recapMarkdown(recap, { diagram = true, architecture = true } = {
   for (const c of recap.changes) {
     out.push(`- **Change:** ${line(c.description)}\n  **Motivation:** ${line(c.motivation)}\n  **Files:** ${c.paths.map(code).join(", ")}`, "");
   }
-  if (architecture) out.push("#### Architecture", "", recap.architecture.description, "");
-  if (diagram) out.push("```mermaid", mermaidWithConnections(recap.architecture.mermaid, recap.architecture.connections, recap.architecture.groups), "```", "");
+  if (recap.other?.length) out.push(`- **Other changes:** ${recap.other.map(code).join(", ")}`, "");
+  if (architecture && recap.architecture.description) out.push("#### Architecture", "", line(recap.architecture.description), "");
+  if (diagram && recap.architecture.mermaid) out.push("```mermaid", mermaidWithConnections(recap.architecture.mermaid, recap.architecture.connections, recap.architecture.groups), "```", "");
   if (architecture && recap.architecture.components?.length) {
     out.push("#### Components", "");
     for (const c of recap.architecture.components) {

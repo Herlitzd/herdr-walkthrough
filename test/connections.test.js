@@ -19,23 +19,29 @@ test('connection descriptions preserve exact direction and real source anchors',
   assert.deepEqual(normalize(raw, aliases, files).recap.architecture.connections, normalized());
 });
 
-test('unsupported, reversed, duplicate and ambiguous connections cannot gain labels', () => {
+const kept = (raw, src = source, f = files) => { const omit = { count: 0 }; return { out: normalizeConnections(raw, src, aliases, f, omit), omitted: omit.count }; };
+
+test('unsupported, reversed, duplicate and ambiguous connections are left out and counted', () => {
   for (const patch of [{ from: 'Missing' }, { from: 'C', to: 'B' }, { hunks: [] }, { hunks: ['invented'] }, { hunks: ['toString'] }]) {
-    assert.throws(() => normalizeConnections([{ ...connection(), ...patch }], source, aliases, files), /Connection:/);
+    assert.deepEqual(kept([{ ...connection(), ...patch }]), { out: [], omitted: 1 });
   }
-  assert.throws(() => normalizeConnections([connection(), connection()], source, aliases, files), /unique/);
-  assert.throws(() => normalizeConnections([connection()], source + '\nB --> C', aliases, files), /unique/);
-  assert.throws(() => normalizeConnections([connection()], source, aliases, [{ ...files[0], status: 'deleted' }]), /resulting code/);
+  assert.deepEqual(kept([connection(), connection()]), { out: normalized(), omitted: 1 });
+  assert.deepEqual(kept([connection()], source + '\nB --> C'), { out: [], omitted: 1 });
+  assert.deepEqual(kept([connection()], source, [{ ...files[0], status: 'deleted' }]), { out: [], omitted: 1 });
+  assert.deepEqual(kept([{ ...connection(), from: ' B ', hunks: ['[h1]'] }]), { out: normalized(), omitted: 0 });
+  assert.deepEqual(kept('nope'), { out: [], omitted: 1 });
 });
 
-test('labels must be short, plain, non-executable text with explicit evidence', () => {
-  for (const label of ['', ' ', '<img>', '`code`', 'a|b', 'a"b', 'a\\b', 'a\nb', 'a\u0000b', 'x'.repeat(61)]) {
-    assert.throws(() => normalizeConnections([{ ...connection(), label }], source, aliases, files), /plain text/);
+test('labels are made short plain text; an empty one is left out', () => {
+  for (const label of ['', ' ', '<>', '`']) assert.deepEqual(kept([{ ...connection(), label }]), { out: [], omitted: 1 });
+  for (const [label, plain] of [['<img>', 'img'], ['`code`', 'code'], ['a|b', 'a b'], ['a"b', 'a b'], ['a\\b', 'a b'], ['a\nb', 'a b'], ['a\u0000b', 'a b']]) {
+    assert.equal(kept([{ ...connection(), label }]).out[0].label, plain);
   }
+  assert.equal(kept([{ ...connection(), label: 'x'.repeat(61) }]).out[0].label.length, 60);
+  // Inline labels are only drawn from evidence: the stored diagram drops them (see recap), metadata decides.
   const inline = source.replace('B --> C', 'B -->|"stores report"| C');
   assert.deepEqual(normalizeConnections([connection()], inline, aliases, files), normalized());
-  assert.throws(() => normalizeConnections([], inline, aliases, files), /source evidence/);
-  assert.throws(() => normalizeConnections([{ ...connection(), label: 'other claim' }], inline, aliases, files), /conflicts/);
+  assert.deepEqual(kept([{ ...connection(), label: 'other claim' }], inline).out[0].label, 'other claim');
 });
 
 test('legacy reports and unsupported flows retain unlabeled connections', () => {
@@ -82,7 +88,7 @@ test('branch, loop, long and parallel edges keep labels inside the canvas and of
 });
 
 test('new generation schema and localized prompt require evidence, not labels on every edge', () => {
-  assert.equal(PROMPT_VERSION, 8);
+  assert.equal(PROMPT_VERSION, 2);
   assert.ok(SCHEMA.properties.recap.properties.architecture.required.includes('connections'));
   const p = buildPrompt({ digest: 'diff', fileCount: 1, hunkCount: 1, what: 'Changes', language: 'pl' });
   assert.match(p.system, /Omit unsupported labels/);

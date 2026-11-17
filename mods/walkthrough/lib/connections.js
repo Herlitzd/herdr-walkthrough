@@ -1,4 +1,5 @@
 import { parseMermaid } from "./diagram.js";
+import { filesByAlias, resolveHunks, plainLabel } from "./alias.js";
 
 export const CONNECTION_SCHEMA = {
   type: "array",
@@ -12,30 +13,27 @@ export const CONNECTION_SCHEMA = {
     },
   },
 };
-const fail = (message) => { throw Object.assign(new Error(`Connection: ${message}`), { code: "invalid" }); };
 
-/** Labels annotate existing directed relationships, never invent new edges. */
-export function normalizeConnections(raw, source, aliases, files) {
+/**
+ * Labels annotate existing directed relationships, never invent new edges.
+ * A label that names no single declared edge, or cites no real resulting code,
+ * is left out (counted in `omit.count`); its edge is still drawn, unlabeled.
+ * Labels are made plain and short rather than refused for a stray character.
+ */
+export function normalizeConnections(raw, source, aliases, files, omit = { count: 0 }) {
   if (raw === undefined) return undefined; // Legacy reports remain unlabeled.
-  if (!Array.isArray(raw)) fail("connections must be an array.");
+  if (!Array.isArray(raw)) { omit.count++; return []; }
   const graph = parseMermaid(source), seen = new Set();
-  const fileByAlias = new Map(files.flatMap((f) => f.aliases.map((a) => [a, f])));
-  const connections = raw.map((c) => {
-    const matches = graph.edges.filter((e) => e.from === c?.from && e.to === c?.to);
-    const key = `${c?.from}:${c?.to}`;
-    if (matches.length !== 1 || seen.has(key)) fail("label needs one unique, declared directed edge.");
+  const fileByAlias = filesByAlias(files);
+  const out = [];
+  for (const c of raw) {
+    const from = typeof c?.from === "string" ? c.from.trim() : "", to = typeof c?.to === "string" ? c.to.trim() : "";
+    const key = `${from}:${to}`;
+    const label = plainLabel(c?.label, 60);
+    const hits = resolveHunks(c?.hunks, aliases, fileByAlias, (f) => f.status !== "deleted");
+    if (graph.edges.filter((e) => e.from === from && e.to === to).length !== 1 || seen.has(key) || !label || !hits.length) { omit.count++; continue; }
     seen.add(key);
-    const label = typeof c.label === "string" ? c.label.trim() : "";
-    if (!label || label.length > 60 || /[<>`"|\\\r\n\x00-\x1f]/.test(label)) fail("label must be short plain text.");
-    if (!Array.isArray(c.hunks) || !c.hunks.length) fail("label needs source hunk evidence.");
-    const hunks = [...new Set(c.hunks)];
-    for (const alias of hunks) {
-      const file = fileByAlias.get(alias);
-      if (!file || !Object.hasOwn(aliases, alias) || !aliases[alias] || file.status === "deleted") fail("source alias must identify real resulting code.");
-    }
-    if (matches[0].label && matches[0].label !== label) fail("inline label conflicts with its source-backed description.");
-    return { from: c.from, to: c.to, label, paths: [...new Set(hunks.map((a) => fileByAlias.get(a).path))], hunkIds: [...new Set(hunks.map((a) => aliases[a]))] };
-  });
-  if (graph.edges.some((e) => e.label && !connections.some((c) => c.from === e.from && c.to === e.to))) fail("inline labels also need source evidence.");
-  return connections;
+    out.push({ from, to, label, paths: [...new Set(hits.map((h) => h.file.path))], hunkIds: hits.map((h) => h.id) });
+  }
+  return out;
 }

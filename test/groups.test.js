@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeGroups } from '../mods/walkthrough/lib/groups.js';
-import { parseMermaid, layoutDiagram, mermaidWithConnections } from '../mods/walkthrough/lib/diagram.js';
+import { parseMermaid, layoutDiagram, mermaidWithConnections, canonicalMermaid } from '../mods/walkthrough/lib/diagram.js';
 import { normalize, SCHEMA, PROMPT_VERSION } from '../mods/walkthrough/lib/walkthrough.js';
 import { recapMarkdown } from '../mods/walkthrough/lib/export.js';
 import { buildPrompt } from '../mods/walkthrough/lib/prompt.js';
@@ -27,19 +27,29 @@ test('boundaries preserve exact membership, explanation and real source evidence
   assert.deepEqual(norm([]), []);
 });
 
-test('invented, duplicate, colliding and evidence-free group members are refused', () => {
+const kept = (groups, f = files) => { const omit = { count: 0 }; return { out: normalizeGroups(groups, source, components, aliases, f, omit), omitted: omit.count }; };
+const shape = (r) => r.out.map((g) => `${g.id}:${g.nodes.join(',')}`);
+
+test('invented, duplicate, colliding and evidence-free members are left ungrouped and counted', () => {
+  for (const [mutate, expected] of [
+    [(g) => { g[0].nodes.push('Unknown'); }, ['App:A,B', 'Data:C']],
+    [(g) => { g[1].nodes.push('A'); }, ['App:A,B', 'Data:C']],
+    [(g) => { g[0].nodes.push('A'); }, ['App:A,B', 'Data:C']],
+    [(g) => { g[0].nodes.push('D'); }, ['App:A,B', 'Data:C']],
+    [(g) => { g[0].hunks = ['h1']; }, ['App:A', 'Data:C']],
+  ]) { const groups = raw(); mutate(groups); const r = kept(groups); assert.deepEqual(shape(r), expected); assert.equal(r.omitted, 1); }
   for (const mutate of [
-    (g) => { g[0].nodes.push('Unknown'); }, (g) => { g[1].nodes.push('A'); },
-    (g) => { g[0].nodes.push('A'); }, (g) => { g[0].id = 'A'; },
-    (g) => { g[1].id = 'App'; }, (g) => { g[0].id = 'bad id'; },
-    (g) => { g[0].nodes.push('D'); }, (g) => { g[0].hunks = ['h1']; },
+    (g) => { g[0].id = 'A'; }, (g) => { g[1].id = 'App'; }, (g) => { g[0].id = 'bad id'; },
     (g) => { g[0].hunks = ['invented']; }, (g) => { g[0].hunks = ['toString']; },
     (g) => { g[0].hunks = []; }, (g) => { g[0].reason = ''; }, (g) => { g[0].nodes = []; },
-  ]) { const groups = raw(); mutate(groups); assert.throws(() => norm(groups), /Group:/); }
-  assert.throws(() => normalizeGroups(raw(), source, components, aliases, files.map((f) => ({ ...f, status: 'deleted' }))), /resulting code/);
-  for (const title of ['<script>', 'x"y', 'x|y', '`x`', 'a\nb', 'x'.repeat(49)]) {
-    const groups = raw(); groups[0].title = title; assert.throws(() => norm(groups), /plain title/);
+  ]) { const groups = raw(); mutate(groups); const r = kept(groups); assert.equal(r.out.length, 1); assert.equal(r.omitted, 1); }
+  assert.deepEqual(kept(raw(), files.map((f) => ({ ...f, status: 'deleted' }))), { out: [], omitted: 2 });
+  const spelled = raw(); spelled[0].hunks = ['[h1]', ' h2 ']; spelled[0].nodes = [' A ', 'B'];
+  assert.deepEqual(kept(spelled).out, norm());
+  for (const [title, plain] of [['<script>', 'script'], ['x"y', 'x y'], ['x|y', 'x y'], ['`x`', 'x'], ['a\nb', 'a b']]) {
+    const groups = raw(); groups[0].title = title; assert.equal(kept(groups).out[0].title, plain);
   }
+  const long = raw(); long[0].title = 'x'.repeat(49); assert.equal(kept(long).out[0].title.length, 48);
 });
 
 test('group frames contain only their members and cannot overlap in TB/LR/cyclic graphs', () => {
@@ -74,8 +84,10 @@ test('grouped Mermaid exports round-trip names, membership, ungrouped nodes and 
   assert.equal(layoutDiagram(exported).groups.length, 2);
   const md = recapMarkdown({ changes: [], architecture: { description: 'Flow', mermaid: source, groups: norm(), connections } });
   assert.ok(md.includes(exported)); assert.match(md, /share the application module/); assert.doesNotMatch(md, /id1|id2/);
+  // The stored diagram keeps no inline boundary: only source-backed groups frame components.
   const conflicting = exported.replace('Application', 'Invented boundary');
-  assert.throws(() => normalizeGroups(raw(), conflicting, components, aliases, files), /agree/);
+  assert.deepEqual(normalizeGroups(raw(), conflicting, components, aliases, files), norm());
+  assert.doesNotMatch(canonicalMermaid(conflicting), /subgraph|Invented/);
 });
 
 test('Mermaid group subset rejects nesting, empty groups, unclosed blocks and active content', () => {
@@ -89,7 +101,7 @@ test('Mermaid group subset rejects nesting, empty groups, unclosed blocks and ac
 });
 
 test('schema and generation require evidence while old ungrouped reports remain unchanged', () => {
-  assert.equal(PROMPT_VERSION, 8);
+  assert.equal(PROMPT_VERSION, 2);
   assert.ok(SCHEMA.properties.recap.properties.architecture.required.includes('groups'));
   const prompt = buildPrompt({ digest: 'diff', fileCount: 2, hunkCount: 3, what: 'Modules', language: 'pl' });
   assert.match(prompt.system, /Do not infer a boundary merely from folder names/);

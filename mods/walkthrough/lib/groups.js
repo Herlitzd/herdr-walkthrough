@@ -1,4 +1,5 @@
 import { parseMermaid } from "./diagram.js";
+import { filesByAlias, resolveHunks, plainLabel } from "./alias.js";
 
 export const GROUP_SCHEMA = {
   type: "array", maxItems: 8,
@@ -12,40 +13,41 @@ export const GROUP_SCHEMA = {
     },
   },
 };
-const fail = (message) => { throw Object.assign(new Error(`Group: ${message}`), { code: "invalid" }); };
+const MAX_GROUPS = 8;
 
-/** Model proposes boundaries; node membership and evidence are checked locally. */
-export function normalizeGroups(raw, source, components, aliases, files) {
+/**
+ * Model proposes boundaries; node membership and evidence are checked locally.
+ * A member its own component's evidence doesn't support is left ungrouped; a
+ * boundary left with no member, no reason or no real evidence is left out.
+ * Each is counted in `omit.count`, and the rest of the blueprint stands.
+ */
+export function normalizeGroups(raw, source, components, aliases, files, omit = { count: 0 }) {
   if (raw === undefined) return undefined;
-  if (!Array.isArray(raw) || raw.length > 8) fail("groups must be an array of at most eight boundaries.");
-  const graph = parseMermaid(source), nodeIds = new Set(graph.nodes.map((n) => n.id));
+  if (!Array.isArray(raw)) { omit.count++; return []; }
+  const nodeIds = new Set(parseMermaid(source).nodes.map((n) => n.id));
   const groupIds = new Set(), assigned = new Set();
   const componentById = new Map((components ?? []).map((c) => [c.id, c]));
-  const fileByAlias = new Map(files.flatMap((f) => f.aliases.map((a) => [a, f])));
-  const result = raw.map((g) => {
-    const id = g?.id, title = typeof g?.title === "string" ? g.title.trim() : "";
-    const reason = typeof g?.reason === "string" ? g.reason.trim() : "";
-    if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(id ?? "") || nodeIds.has(id) || groupIds.has(id)) fail("ID must be unique and distinct from node IDs.");
-    if (!title || title.length > 48 || /[<>`"|\\\r\n\x00-\x1f]/.test(title) || !reason) fail("a boundary needs a short plain title and an evidenced reason.");
-    if (!Array.isArray(g.nodes) || !g.nodes.length || !Array.isArray(g.hunks) || !g.hunks.length) fail("a boundary needs members and source evidence.");
+  const fileByAlias = filesByAlias(files);
+  const out = [];
+  for (const g of raw) {
+    if (out.length >= MAX_GROUPS) { omit.count++; continue; }
+    const id = typeof g?.id === "string" ? g.id.trim() : "";
+    const title = plainLabel(g?.title, 48), reason = typeof g?.reason === "string" ? g.reason.trim() : "";
+    const hits = resolveHunks(g?.hunks, aliases, fileByAlias, (f) => f.status !== "deleted");
+    if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(id) || nodeIds.has(id) || groupIds.has(id) || !title || !reason || !hits.length) { omit.count++; continue; }
+    const hunkIds = new Set(hits.map((h) => h.id));
+    const nodes = [];
+    for (const raw of Array.isArray(g.nodes) ? g.nodes : []) {
+      const node = typeof raw === "string" ? raw.trim() : "";
+      // A component belongs to one boundary, and only when the boundary's evidence includes its own.
+      const supported = componentById.get(node)?.hunkIds.some((h) => hunkIds.has(h));
+      if (!nodeIds.has(node) || assigned.has(node) || nodes.includes(node) || !supported) { omit.count++; continue; }
+      nodes.push(node);
+    }
+    if (!nodes.length) { omit.count++; continue; }
+    for (const node of nodes) assigned.add(node);
     groupIds.add(id);
-    const hunkIds = new Set(), paths = new Set();
-    for (const alias of g.hunks) {
-      const file = fileByAlias.get(alias);
-      if (!file || !Object.hasOwn(aliases, alias) || !aliases[alias] || file.status === "deleted") fail("source alias must identify real resulting code.");
-      hunkIds.add(aliases[alias]); paths.add(file.path);
-    }
-    for (const node of g.nodes) {
-      if (!nodeIds.has(node) || assigned.has(node)) fail("each declared component can belong to at most one group.");
-      const c = componentById.get(node);
-      if (!c?.hunkIds.some((id) => hunkIds.has(id))) fail("every member needs supporting component evidence; leave uncertain members ungrouped.");
-      assigned.add(node);
-    }
-    return { id, title, nodes: [...g.nodes], reason, paths: [...paths], hunkIds: [...hunkIds] };
-  });
-  for (const inline of graph.groups ?? []) {
-    const group = result.find((g) => g.id === inline.id);
-    if (!group || group.title !== inline.title || group.nodes.length !== inline.nodes.length || inline.nodes.some((id) => !group.nodes.includes(id))) fail("inline boundary must agree with source-backed group metadata.");
+    out.push({ id, title, nodes, reason, paths: [...new Set(hits.map((h) => h.file.path))], hunkIds: [...hunkIds] });
   }
-  return result;
+  return out;
 }

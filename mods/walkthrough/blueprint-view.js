@@ -30,7 +30,9 @@ export function blueprintView(architecture, t, {
     .when(!label, (el) => el.child(div().text_size(12).text_color(t.muted).child("Select a component on the blueprint to inspect its role and source changes.")))
     .when(Boolean(label), (el) => el
       .child(div().text_size(14).font_semibold().child(label))
-      .when(!component, (e) => e.child(div().text_size(12).text_color(t.dim).child("This saved report has no component details. Regenerate it to add source-backed change markers.")))
+      .when(!component, (e) => e.child(div().text_size(12).text_color(t.dim).child(architecture.components
+        ? "Its details didn't match the diff and were left out."
+        : "This saved report has no component details. Regenerate it to add source-backed change markers.")))
       .when(Boolean(component), (e) => e
         .child(h_flex().child(chip(t, COMPONENT_LABELS[component.status], colors[component.status])))
         .when(Boolean(memberGroup), (r) => r.child(div().text_size(11).text_color(t.muted)

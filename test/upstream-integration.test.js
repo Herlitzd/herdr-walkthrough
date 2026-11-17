@@ -174,3 +174,25 @@ test('merged prompt includes task rules and generated-file recap visibility whil
   assert.ok(prompt.system.lastIndexOf('Write all prose in English')>prompt.system.lastIndexOf('Write in Polish.'));
   assert.match(prompt.system,/contract titles/);
 });
+test('a report opens on Recap while unread, else on its first unread step', () => {
+  const p=panel();
+  assert.equal(p.openingPage(),0);
+  p.setRead(p.view.steps[0],true);assert.equal(p.openingPage(),4);
+  p.setRead(p.view.steps[1],true);assert.equal(p.openingPage(),0,'all read: back to Recap');
+});
+test('contract labels follow the report language, not the language picker', () => {
+  const p=panel();p.language='pl';
+  assert.equal(p.contractLanguage(),'en');
+  assert.equal(p.pages()[2].title,'Database');
+  p.shown.entry.language='pl';assert.equal(p.pages()[2].title,'Baza danych');
+});
+test('r goes to Recap from any page', () => {
+  const p=panel();p.go(4);p.onKey({key:'r'},cx);assert.equal(p.step,0);
+});
+test('Recap says when details were left out and when there is no blueprint', () => {
+  const p=panel(),w=p.shown.entry.walkthrough;
+  assert.doesNotMatch(text(p.reportPage(colors)),/left out|No blueprint/);
+  w.omitted={recap:2,contracts:1};w.recap.architecture.mermaid='';
+  const page=text(p.reportPage(colors));
+  assert.match(page,/3 details .* were left out/);assert.match(page,/No blueprint/);
+});

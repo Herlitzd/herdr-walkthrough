@@ -39,8 +39,14 @@ When the diff changes a database schema, Protobuf definition or public API contr
 **Contracts** pages follow Recap and the optional Task page. Each change shows before/after
 excerpts, compatibility impact, deployment order when established, its exact supporting
 diff and links to matching code steps. Missing evidence and changes without a matching
-step are marked. Contract controls and exported labels support all fourteen selectable
-languages; generated explanations follow the chosen language.
+step are marked. Generated explanations follow the chosen language, and so do the
+Contracts page labels; the rest of the Recap page's own labels (headings, the blueprint
+inspector) are in English for now.
+
+Steps are the only part a report must have. A recap, blueprint or contract detail that
+doesn't hold up against the diff (a diagram outside the supported subset, a component or
+label citing a hunk that isn't there) is left out, and Recap says so; the run is never
+lost over it. Files no recap change names are listed under **Other changes**.
 
 Older reports remain readable. Regenerate them to add blueprint metadata or contract pages,
 or to replace explanations generated in the wrong language. Source toggles and step links
@@ -128,6 +134,7 @@ says *where* a request shows up, never whether it's done well.
 | **x** | Mark the step read or unread |
 | **u** | Unread only: step through only what you haven't read |
 | **t** | The task page (**←** from the first step goes there too) |
+| **r** | The Recap page |
 | **Esc** | Close a picker, the task editor or a comment, then the dialog |
 
 <details>
@@ -137,7 +144,7 @@ says *where* a request shows up, never whether it's done well.
 | --- | --- |
 | **Matched against** menu | Found (default), Your own… (write it), or Off; kept per repository and tab |
 | Last turn → **⚡ Auto** | On (default): write the last turn's walkthrough without a click. One click turns it off: only on Generate |
-| `walkthrough.generate`, `.cancel`, `.next`, `.prev`, `.copy`, `.unread`, `.task` | Generate, cancel, move, Copy as Markdown, Unread only and write your own task |
+| `walkthrough.generate`, `.cancel`, `.next`, `.prev`, `.copy`, `.unread`, `.task`, `.recap` | Generate, cancel, move, Copy as Markdown, Unread only, write your own task and go to Recap |
 
 </details>
 

@@ -1,3 +1,4 @@
+import { filesByAlias, resolveHunks } from "./alias.js";
 // Evidence-anchored contract changes, kept separate from the reading order.
 export const CONTRACT_KINDS = ["database", "protobuf", "api"];
 export const COMPATIBILITY = ["additive", "breaking", "mixed", "unknown"];
@@ -24,36 +25,38 @@ export const CONTRACT_SCHEMA = {
   },
 };
 const text = (v) => typeof v === "string" ? v.trim() : "";
-const fail = (message) => { throw Object.assign(new Error(`Schema/API: ${message}`), { code: "invalid" }); };
 
-export function normalizeContracts(raw, idByAlias, files) {
+/**
+ * Contract pages, each change anchored to the hunks that show it. Forgiving
+ * like steps: a change with no real evidence, or with no state to compare, is
+ * left out; a page left with no change, or without its explanation, is left
+ * out; a duplicate kind keeps its first page. Each is counted in `omit.count`.
+ * A state the operation rules out (a "before" for something added) is cleared
+ * rather than refused: models write "(none)" there.
+ */
+export function normalizeContracts(raw, idByAlias, files, omit = { count: 0 }) {
   if (raw === undefined) return []; // Earlier saved reports remain readable.
-  if (!Array.isArray(raw) || raw.length > 3) fail("expected up to one page per contract kind.");
-  const seen = new Set(), known = new Map();
-  for (const f of files) for (const alias of f.aliases) known.set(alias, f.path);
-  return raw.map((page) => {
+  if (!Array.isArray(raw)) { omit.count++; return []; }
+  const seen = new Set(), fileByAlias = filesByAlias(files), pages = [];
+  for (const page of raw) {
     const kind = page?.kind, title = text(page?.title), summary = text(page?.summary), impact = text(page?.impact);
-    if (!CONTRACT_KINDS.includes(kind) || seen.has(kind)) fail("invalid or duplicate kind.");
+    if (!CONTRACT_KINDS.includes(kind) || seen.has(kind) || !title || !summary || !impact) { omit.count++; continue; }
+    const paths = new Set(), changes = [];
+    for (const c of Array.isArray(page.changes) ? page.changes : []) {
+      const name = text(c?.name), detail = text(c?.detail), operation = c?.operation;
+      const before = operation === "added" ? "" : text(c?.before), after = operation === "removed" ? "" : text(c?.after);
+      const hits = resolveHunks(c?.hunks, idByAlias, fileByAlias);
+      if (!name || !detail || !OPERATIONS.includes(operation) || (operation !== "added" && !before) || (operation !== "removed" && !after) || !hits.length) { omit.count++; continue; }
+      for (const h of hits) paths.add(h.file.path);
+      changes.push({ name, operation, before, after, detail, hunkIds: hits.map((h) => h.id) });
+    }
+    if (!changes.length) { omit.count++; continue; }
     seen.add(kind);
-    if (!title || !summary || !impact || !COMPATIBILITY.includes(page.compatibility)) fail("missing explanation or compatibility assessment.");
-    if (!Array.isArray(page.changes) || !page.changes.length) fail("a page needs concrete changes.");
-    const paths = new Set();
-    const changes = page.changes.map((c) => {
-      const name = text(c?.name), before = text(c?.before), after = text(c?.after), detail = text(c?.detail);
-      if (!name || !detail || !OPERATIONS.includes(c?.operation)) fail("invalid change.");
-      if ((c.operation !== "added" && !before) || (c.operation !== "removed" && !after)) fail("missing before/after state.");
-      if ((c.operation === "added" && before) || (c.operation === "removed" && after)) fail("added/removed states must match the operation.");
-      if (!Array.isArray(c.hunks) || !c.hunks.length) fail("missing diff evidence.");
-      const hunkIds = [];
-      for (const alias of c.hunks) {
-        if (typeof alias !== "string" || !known.has(alias) || !idByAlias[alias]) fail("unknown hunk evidence.");
-        paths.add(known.get(alias)); hunkIds.push(idByAlias[alias]);
-      }
-      return { name, operation: c.operation, before, after, detail, hunkIds: [...new Set(hunkIds)] };
-    });
-    if (!Array.isArray(page.rollout) || page.rollout.some((s) => !text(s))) fail("invalid rollout steps.");
-    return { kind, title, summary, compatibility: page.compatibility, impact, changes, rollout: page.rollout.map(text), paths: [...paths] };
-  }).sort((a,b) => CONTRACT_KINDS.indexOf(a.kind) - CONTRACT_KINDS.indexOf(b.kind));
+    const compatibility = COMPATIBILITY.includes(page.compatibility) ? page.compatibility : "unknown";
+    const rollout = (Array.isArray(page.rollout) ? page.rollout : []).map(text).filter(Boolean);
+    pages.push({ kind, title, summary, compatibility, impact, changes, rollout, paths: [...paths] });
+  }
+  return pages.sort((a, b) => CONTRACT_KINDS.indexOf(a.kind) - CONTRACT_KINDS.indexOf(b.kind));
 }
 
 // Backward-compatible defaults use the default report language, English.
