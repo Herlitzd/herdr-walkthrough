@@ -21,6 +21,7 @@ export const Scrollbar={vertical:div}, Input={new:div}, Textarea={new:div};
 export const InputState={new:()=>({on(){},value(){return '';},set_value(){},focus(){}})}, TextareaState=InputState;
 export const VirtualListScrollHandle={new:()=>({})}, TextView={markdown:(id,text)=>div().id(id).child(text)};
 const path=()=>new Proxy({},{get:()=>()=>path()});export const PathBuilder={stroke:path,fill:path};
+export const Background={solid:(c)=>c,stop:(c)=>c,linear_gradient:(a,b)=>b,pattern_slash:(c)=>c,checkerboard:(c)=>c};
 export const spaces=()=>[],panes=()=>[],agents=()=>[],focused=()=>null,props=()=>({}),settings=()=>({});
 export const shared=()=>null,setShared=()=>{},theme=()=>({}),closeOverlay=()=>{},notify=()=>{};
 export const home=()=>'/synthetic',appHome=()=>'/synthetic';
@@ -202,7 +203,7 @@ test('Recap says when details were left out and when there is no blueprint', () 
 test('Recap page, contents and blueprint inspector follow the report language', () => {
   const p=panel();p.shown.entry.language='tr';
   const page=text(p.reportPage(colors));
-  assert.match(page,/Özet/);assert.match(page,/Değişiklikler ve gerekçeleri/);assert.match(page,/Mimari/);assert.match(page,/Değiştirildi/);
+  assert.match(page,/ÖZET/);assert.match(page,/BİLEŞEN AYRINTILARI/);assert.match(page,/Değişiklikler ve gerekçeleri/);assert.match(page,/Mimari/);assert.match(page,/Değiştirildi/);
   assert.doesNotMatch(page,/COMPONENT DETAILS|Changes and motivations/);
   assert.equal(p.pages()[0].title,'Özet');
   assert.ok(find(p.contents(colors),'toc-recap'));assert.match(text(p.contents(colors)),/Özet/);
