@@ -37,5 +37,5 @@ export function recapStrings(language = "en") {
   const contract = contractStrings(language);
   const tag = Object.keys(RECAP_TRANSLATIONS).find((t) => contractStrings(t) === contract) ?? "en";
   const words = RECAP_TRANSLATIONS[tag];
-  return { ...words, status: { added: contract.operations.added, modified: contract.operations.modified, context: words.context } };
+  return { ...words, tag, status: { added: contract.operations.added, modified: contract.operations.modified, context: words.context } };
 }

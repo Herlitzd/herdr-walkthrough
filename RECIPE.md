@@ -48,32 +48,33 @@ and model/language controls stack at narrow widths to avoid overlapping.
 A dialog 74% of the window wide and 80% tall (`modal`), on `theme().popover`; as a pane, on
 `theme().background`. Text 13px, `theme().foreground`. Top to bottom:
 
-1. **Header**, 40px, bottom border `border`: a 12px `◆` in `accent`, "Walkthrough" 13.5px
-   semibold, then the repository name and `⎇ branch` (or "(detached)") in `dim` 12px; at
-   the right, in a dialog, a ghost "Esc" button.
-2. **Toolbar**, two rows, each with a bottom border. Above (at least 42px, padding 7px
-   14px, wrapping when narrow): what to read and the one action. Below (at least 36px,
-   padding 5px 14px): on the left which one of it, on the right how it is written.
-   - scope tabs in a `raised` pill (radius 7, padding 2): Uncommitted, Staged, Unstaged,
-     Branch, Commit, Pull request, Last turn; 22px tall, 12px; the chosen one on `popover`, semibold, the rest
-     `muted`. Each has a tooltip saying what it reads.
-   - above, right of the tabs: a braille spinner while the diff is read, and the action:
-     **Generate** (solid) with nothing exact on screen, **Regenerate** (outline) over an
-     exact one, **Cancel** while one is running.
-   - below, left: Branch has "vs" (11px `dim`) and a dropdown of the base; Commit a
+1. **Header**, 48px, bottom border `border`: the mark (a 22px tile, radius 7, a 135° gradient
+   from `ansi4` to `ansi5` painted with `window.paint_path` and `Background.linear_gradient`,
+   three white bars, the middle one shorter), "Walkthrough" 14px semibold, then a `raised`
+   pill with the repository name and `⎇ branch` (or "detached") in `muted` 11.5px; at the
+   right a braille spinner while the diff is read, the one action — **✦ Generate** (solid)
+   with nothing exact on screen, **Regenerate** (outline) over an exact one, **Cancel**
+   while one is running — and, in a dialog, a ghost "Esc" button.
+2. **Toolbar**, one row (padding 8px 14px, bottom border), stacking into two below 1100px:
+   on the left what to read and which one of it, on the right how it is written.
+   - scope tabs in a `raised` pill (radius 9, padding 3): Uncommitted, Staged, Unstaged,
+     Branch, Commit, Pull request, Last turn; 24px tall, 12px; the chosen one on `popover`,
+     semibold, with a small shadow, the rest `muted`. Each has a tooltip saying what it reads.
+   - after the tabs: Branch has "vs" (11px `dim`) and a dropdown of the base; Commit a
      dropdown of the commit (`short subject`); Pull request, once some are listed, a
      dropdown of the open pull requests (`#12 title`, hint "author · head → base",
-     "· draft", "· this branch"); Last turn, once a turn is recorded, "Turn" and a dropdown
+     "· draft", "· this branch"); Last turn, once a turn is recorded, a dropdown
      of the turns (the prompt's first line, hint "5 min ago · took 1:20 · t3", "still
-     running", "interrupted" or "no Stop recorded, ended when seen idle"), then a ghost
-     **⚡ Auto: on** / **Auto: off** that switches Auto with one click (tooltip: what it does).
-   - below, right: once a diff is read, "Matched against" (11px `dim`) and the task dropdown
+     running", "interrupted" or "no Stop recorded, ended when seen idle"), then **⚡ Auto**
+     (soft: `accent` on `accent` + `1f`) / a ghost **Auto: off** that switches Auto with one
+     click (tooltip: what it does).
+   - right: once a diff is read, the task dropdown, soft while a task is found
      ("◎ prompt", "◎ PR description", "◎ commit message", "◎ 3 prompts", "◎ yours",
-     "nothing found", "nothing (off)"; rows Found (hint: where it came from, or "Nothing
+     "No task found", "No task (off)"; rows Found (hint: where it came from, or "Nothing
      found for this change"), Your own… (hint: its first line) and Off); then the model
      (Haiku, Sonnet, Opus) and language (its own name: Türkçe, Deutsch …) dropdowns as ghost
-     buttons in one bordered group with a 1px divider.
-   - Dropdowns open a menu (8px radius, `popover`, `border`, shadow) under the toolbar,
+     buttons in one bordered group (radius 8) with a 1px divider. Dropdown faces end in "▾".
+   - Dropdowns open a menu (12px radius, rows radius 8, `popover`, `border`, shadow) under the toolbar,
      left-aligned for base and commit, right-aligned for model and language; the chosen row
      ticked in `accent` and on `selected`; a click outside closes it. The menu is a
      `v_virtual_list` (30px rows, 44px with a hint line, at most 360px tall, a `Scrollbar`
@@ -109,39 +110,39 @@ A dialog 74% of the window wide and 80% tall (`modal`), on `theme().popover`; as
      ~/.claude/settings.json" (next to existing hooks; the walkthrough never edits
      settings); 3 "Send your agent a prompt" (where snapshots go, the newest 20 kept);
    - **intro** (no walkthrough yet), a 620px column: "Read this change in the order it
-     makes sense" 18px semibold, one paragraph in `muted`, chips for files, hunks,
+     makes sense" 24px semibold, one 13.5px paragraph in `muted`, chips for files, hunks,
      "≈ 3k tokens" (red past the limit), "N generated, not sent", "N not read" and, with a
      task, "Task: prompt" in `accent` (tooltip: where it came from), red
      notices when `claude` is missing or the diff is too large, the solid
-     "Generate walkthrough with Haiku" button and "in English", then a bordered list of the
-     changed files (26px rows: path, a "generated" chip, status, `+n` in `ansi2`, `−n` in
+     "Generate walkthrough with Haiku" button and "in English", then a bordered card (radius
+     12, on `surface`) listing the changed files (32px rows: path, a "generated" chip, status, `+n` in `ansi2`, `−n` in
      `ansi1`);
    - **progress** (first generation running), centered: ✓ Read the diff (N hunks), a
      spinner on "Asking Claude Haiku" with the elapsed `m:ss`, ○ Putting the steps together,
      a line saying it runs in the background, and Cancel;
    - **the walkthrough**: a 248px contents column (right border) and the page.
-     - Contents: the title 13.5px semibold, the summary 12px `muted` (line height 1.5), cut
-       at 150 characters with "…" and a "Show more" / "Show less" link in `accent` 11.5px;
-       a 3px read bar (`ansi2` on `raised`, radius 2) and "2 of 7 read" in `dim` 11px; then
-       each part's title 10px uppercase `dim`, with "1 / 2" (its steps read / all) at the
-       right, and its steps: an 18px square (radius 5) with
-       the step number in `muted` on `raised`, ✓ in `ansi2` on `raised` once read (and its title
-       in `dim` while another step is on screen), `!` in
-       `blocked` on `blocked` + `29` alpha when outdated, the number in `accent` on `accent` +
-       `29` with a tooltip when it changed since it was read; the title 12.5px (`muted` for skim
-       steps), and a "KEY" tag for key steps (9.5px semibold `accent`, a 15px bordered box,
-       `accent` + `55` border, tooltip "Key change"). Every row has a 2px left border, `accent`
-       on the chosen row (which is on `accent` + `1f` alpha) and transparent otherwise. With
-       Unread only on, "Unread only · u shows all" in `accent` 11px under the summary. A
-       walkthrough matched against a task has a **Task** row next, shaped like a step's: `◎`
-       in `accent`, "Task", and "2 / 3" (requests shown in this diff / all, in `ansi3` while
-       some aren't, "—" for none). Then only
-       the steps not read plus the one on screen ("Every step is read." when none). After a
-       rule, "… Not covered" with its count (in `accent` while some of its hunks aren't read),
-       then "Haiku · English · date · $0.002" in
-       `dim` 10.5px. Hidden when the walkthrough is narrower than 720px.
-     - Banners over the page, one shape (8px radius, a 3px left edge in the banner's colour
-       on its colour + `14`, or on `raised` with a `border` edge for a quiet one; an 18px
+     - Contents, on `surface`: the title 14.5px semibold, the summary 12px `muted` (line
+       height 1.55), cut at 150 characters with "…" and a "Show more" / "Show less" link in
+       `accent` 11.5px; a 4px rounded meter (`accent`, `ansi2` once all is read, on `raised`)
+       and "2 of 7 read" in `dim` 11px; then small-caps group labels (10.5px semibold `dim`):
+       Overview (Recap, Task), Contracts, and each part's title with "1 / 2" (its steps read /
+       all) at the right. Every row is 32px, radius 8: a 20px round badge, the title 12.5px,
+       then any tag. The badge holds the step number in `muted` on `raised`; ✓ in `ansi2` on
+       `ansi2` + `24` once read (and the title in `dim` while another page is on screen);
+       `!` in `blocked` on `blocked` + `29` when outdated; the number in `accent` on `accent` +
+       `29` with a tooltip when it changed since it was read; on the chosen row the number on
+       solid `accent`, the row on `accent` + `1f` and its title medium. Recap's badge is "≡",
+       the contract pages' "▤" (database), "{}" (Protobuf), "⇄" (API). Skim steps' titles are
+       `muted`; key steps carry a "KEY" pill (9.5px semibold `accent` on `accent` + `24`,
+       tooltip "Key change"). With Unread only on, "Unread only · u shows all" in `accent` 11px
+       under the summary. A walkthrough matched against a task has a **Task** row: `◎` in
+       `accent` on `accent` + `24`, "Task", and a "2 / 3" pill (requests shown in this diff /
+       all, `ansi3` while some aren't, "—" for none). Then only the steps not read plus the one
+       on screen ("Every step is read." when none). After a rule, "… Not covered" with its
+       count in a pill (`accent` while some of its hunks aren't read), then "Haiku · English ·
+       date · $0.002" in `dim` 10.5px. Hidden when the walkthrough is narrower than 720px.
+     - Banners over the page, one shape (10px radius, a 1px border in the banner's colour +
+       `40` on its colour + `12`, or on `raised` with a `border` border for a quiet one; a 20px
        round icon on the colour + `29`; the message 12px, then a `muted` 11.5px detail line;
        the action at the right): "Writing a new walkthrough with Haiku… 0:12" + Cancel
        (`accent`, "…"); an error (`ansi1`, "!"); "The code moved on since this walkthrough
@@ -155,40 +156,56 @@ A dialog 74% of the window wide and 80% tall (`modal`), on `theme().popover`; as
        walkthrough was written without a task. Regenerate to match the change against it."
        or "This walkthrough was matched against a task that is now off or gone."; and "3 steps
        changed since you last read them." + "Go →" (`accent`, "↻"), each press the next such step.
-     - Notices in the page (the intro's, the task page's) are the same tinted box with a 3px
-       edge, without an icon; a `muted` one is on `raised` with a `border` edge.
-     - Task page (before the first step, with a task): "TASK · THE TURN'S PROMPT" 10.5px
-       semibold `dim`, a ghost "Show the task" / "Hide the task" at its right (the task's
+     - Notices in the page (the intro's, the task page's) are the same tinted box, without an
+       icon; a `muted` one is on `raised` with a `border` border.
+     - Every page scrolls with padding 20px 28px 28px and a 14px gap, and starts with a
+       small-caps line (10.5px semibold `dim`, upper-cased in the report's language) over a
+       22px semibold title.
+     - Recap page (first): "RECAP", the walkthrough's title and summary (14px `muted`); a
+       callout when details were left out; "Architecture" 15px semibold over its description
+       (Markdown); the blueprint in a card (radius 12, on `surface`): a bordered zoom group
+       (− · Fit · +) and a ghost "Mermaid source", then the drawing and the component
+       inspector (radius 12, on `background`). The drawing is in the UI font on `background`
+       with a faint dot grid: component cards (radius 12, a 3px top strip and a status pill
+       in `ansi2` added / `ansi3` modified, `muted` context), wires with pill labels, dashed
+       group frames with a title pill; the selected card in `accent` with a shadow. Then
+       "Changes and motivations": a card per change (radius 12, on `surface`) with a 24px
+       numbered circle in `accent`, the change (Markdown, medium), "MOTIVATION" and its text in
+       `muted`, and a pill per file in the terminal font; files no change names in an "Other
+       changes" card.
+     - Task page (before the first step, with a task): "TASK · THE TURN'S PROMPT", a ghost "Show the task" / "Hide the task" at its right (the task's
        text on `raised`, line by line, and a line when the session's earlier prompts were
-       given too); "What the task asks for" 17px semibold; one `muted` paragraph saying it
-       tells where a request shows up, not whether it is done well; then a row per request
-       with a bottom border: ✓ `ansi2` (seen), ◐ `ansi3` (partly), ○ `dim` (absent), each
-       with a tooltip, the request 13.5px (`muted` when absent), then a **Partly** chip or
-       "Not in this diff", a 20px bordered chip per step ("3. title", a click goes there),
+       given too); "What the task asks for"; one `muted` paragraph saying it
+       tells where a request shows up, not whether it is done well; then a card per request
+       (radius 12, on `surface`, 8px apart): a 24px round mark, ✓ `ansi2` (seen), ◐ `ansi3`
+       (partly), ○ `dim` (absent), on its colour + `24`, each with a tooltip, the request
+       13.5px (`muted` when absent), then a **Partly** chip or "Not in this diff", a 22px pill per step ("3. title", a click goes there),
        "and 2 hunks under Not covered" (a click goes there), **Outdated** when its code
        changed. Then "Not tied to any request" 14px semibold, a `muted` line, and a chip per
        such step. With no concrete request: a `muted` notice instead of the rows. A new
        walkthrough with a task opens here while none of its steps is read.
-     - Page, scrolling, padding 16px 22px, gap 10: "PART · STEP 2 OF 5" 10.5px semibold
-       `dim`, at its right a small ghost "Mark read" / "✓ Read" (disabled on an outdated
-       step); the title 17px semibold with tinted chips **Key change** (`accent` on `accent`
+     - Step page: "PART · STEP 2 OF 5", at its right a small "Mark read" (outline) / "✓ Read"
+       (soft) button (disabled on an outdated step); the title with tinted pills **Key change** (`accent` on `accent`
        + `14`), **Context** (on `raised`), **Outdated** (`blocked` on `blocked` + `14`);
        with a task that names requests, a chip per request the step serves, "For: Retry
        failed uploads" (`ansi2` on `ansi2` + `12`, the whole request as tooltip), or "Not
        tied to a request" on `raised`; a click on either goes to the task page; the
-       explanation 13.5px, line height 1.6, at most 820px wide; notes, full width up to
-       820px, as a `blocked` chip on `blocked` + `12` (Decision, Upkeep, Limitation,
-       Divergence, Untested, each with a tooltip) beside 12.5px `muted` text that wraps; for an outdated step one 12px line, "1 of 2 hunks" in
+       explanation as Markdown (`TextView.markdown`, so `code` reads as code) 14px, line
+       height 1.65, at most 820px wide; notes, up to 820px, as callouts: a card (radius 10, a
+       1px border in the note's colour + `33`, on its colour + `0f`) with a pill (Decision
+       `accent`, Upkeep `ansi6`, Limitation `ansi3`, Divergence `ansi5`, Untested `blocked`,
+       each with a tooltip) beside 12.5px text that wraps; for an outdated step one 12px line, "1 of 2 hunks" in
        semibold `blocked` then "changed or gone · what's left is below" in `muted` ("Every
        hunk" … "regenerate to read the code as it is now" when none is left); then the code,
        when any is left.
-     - Code: one bordered block (radius 8); a 28px `raised` header per file with a bottom
-       border (path semibold, status or "renamed from x", then the file's `+n` in `ansi2` and
-       `−n` in `ansi1` within the block); a 22px hunk label on `hover` instead of git's `@@`
+     - Code: one bordered card (radius 10, on `background`); a 36px `raised` header per file
+       with a bottom border ("▤", the path 12.5px medium, status or "renamed from x", then the
+       file's `+n` and `−n` as pills, `ansi2` / `ansi1` on their colour + `1f`); a 24px hunk
+       label on `surface` instead of git's `@@`
        line (which is its tooltip), divided from the lines above it: "Line 12" (where it
        starts in the new file; in the old one when nothing of it is left), "⋯ 28 lines · Line
        44" after another hunk of the same file, then git's context (the function or class)
-       in the terminal font, `muted`; 20px lines in the terminal font 11.5px with a 2px left
+       in the terminal font, `muted`; 21px lines in the terminal font 11.5px with a 2px left
        edge (`ansi2` added, `ansi1` removed, transparent otherwise): number (as wide as the
        largest number in the block needs, 7px a digit + 8, right-aligned, `dim`), sign (`ansi2`/`ansi1`), text unwrapped and coloured by
        `lib/highlight.js` from the theme: keywords `ansi5`, strings `ansi2`, numbers and
@@ -198,16 +215,18 @@ A dialog 74% of the window wide and 80% tall (`modal`), on `theme().popover`; as
        markup stay plain. Each line is coloured alone, so a comment or string spanning lines
        is only coloured on its first. Added lines on `ansi2` + `14` alpha, removed on `ansi1`
        + `14`. At most 2,500 lines per page, then "N more lines not drawn here."
-     - Not covered page: the title, one paragraph, then a bordered card per file: ▶/▼,
+     - Not covered page: "THE REST OF THE DIFF", the title, one paragraph, then a card per
+       file (radius 12, on `surface`): ▶/▼,
        path, the model's note or "Generated file, not sent to the model." / "Binary file." /
        "Not read: larger than 1 MB.", status and `+n −n`; a card with hunks not read has an
-       `accent` border and an "Unread" / "2 unread" chip, a read one's path is `muted`; a small
+       `accent` + `88` border and an "Unread" / "2 unread" chip, a read one's path is `muted`; a small
        ghost "Mark read" / "✓ Read" marks all its hunks. A card opens to its hunks; one not read
        has its hunk label in `accent` on `accent` + `1f`, starting "●".
-4. **Footer** (with a walkthrough), 44px, top border: "← Previous" ("← Task" on the first
-   step with a task page; disabled on the first page), "Next →" ("First step →" on the task
-   page, "Not covered →" on the last step), "2 / 5 read · ← → to move" or "End of the walkthrough ·
-   2 / 5 read", a ghost "Unread only" / "Show all";
+4. **Footer** (with a walkthrough), 52px, on `surface`, top border: "← Previous" (outline;
+   disabled on the first page), "Next →" (solid; the next page's title when it isn't a step:
+   "Task →", "API →", "Not covered →"), a 72px meter with "2 / 5 read" ("Recap · 2 / 5 read"
+   on a page that isn't a step, "End · 2 / 5 read" on Not covered), ← → as key caps
+   ("to move" beside them from 900px), a ghost "Unread only" / "Show all";
    at the right, on the Pull request tab, a ghost "Post to #12", then a ghost "Copy as
    Markdown", the last send's, copy's or post's result (in `ansi2` with a ✓ when it
    worked), "Click a line to comment" or "2 comments", and with
@@ -227,7 +246,7 @@ A dialog 74% of the window wide and 80% tall (`modal`), on `theme().popover`; as
 - **Generate** starts a background job; the toolbar action becomes Cancel and the elapsed
   time counts each second. When the job's answer appears it is checked, stored and shown.
   Closing the dialog doesn't stop it; the next open picks the answer up. Errors show as a
-  red notice: not logged in, timed out (2 minutes plus a second per hunk, at most 15),
+  red notice: not logged in, timed out (4 minutes plus 2 seconds per hunk, at most 15),
   stopped without an answer (the process is gone), no usable steps, too large.
 - Regenerating over an earlier state of the code, with the same model and language, sends
   the old walkthrough (titles and text, no hunk references) to be revised; another model or

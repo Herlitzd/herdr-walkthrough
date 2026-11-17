@@ -20,6 +20,7 @@ export const Scrollbar = { vertical: div };
 export const TextView = { markdown: (id, value) => div().id(id).child(value) };
 const path = () => new Proxy({}, { get: () => (...args) => path() });
 export const PathBuilder = { stroke: path, fill: path };
+export const Background = { solid: (c) => c, stop: (c) => c, linear_gradient: (a, b) => b };
 `;
 const asUrl = (source) => 'data:text/javascript;base64,' + Buffer.from(source).toString('base64');
 const stubUrl = asUrl(stub);

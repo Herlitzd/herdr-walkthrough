@@ -98,3 +98,10 @@ test("generation asks for all changes, evidence-based motivations and localized 
   assert.match(p.system, /architecture description and diagram labels/);
   assert.match(p.system, /No HTML, backticks, links/);
 });
+
+test("prose is asked for as plain sentences with code in backticks, since it is drawn as Markdown", () => {
+  const p = buildPrompt({ digest: "diff", fileCount: 1, hunkCount: 1, what: "Changes" });
+  assert.match(p.system, /shown as Markdown/);
+  assert.match(p.system, /single backticks/);
+  assert.doesNotMatch(p.system, /no markdown/);
+});
