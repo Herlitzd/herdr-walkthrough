@@ -8,7 +8,7 @@ import { button, chip, upper } from "./ui.js";
 
 /** Native inspector. File buttons navigate to their walkthrough sections. */
 export function blueprintView(architecture, t, {
-  width = 700, zoom = 1, fontFamily = "monospace", files = [], selectedId = null,
+  width = 700, zoom = 1, files = [], selectedId = null,
   fileTargets = () => [], onSelect = () => {}, onFile = () => {}, onClose = () => {}, words = recapStrings("en"),
 } = {}) {
   const components = architecture.components ?? [];
@@ -60,7 +60,7 @@ export function blueprintView(architecture, t, {
     .rounded(10).border_1().border_color(t.border)
     .when(wide, (el) => el.w(canvasWidth))
     .when(!wide, (el) => el.w_full())
-    .child(diagramView(architecture.mermaid, t, { width: canvasWidth, zoom, fontFamily, components, connections, groups, selectedId, onSelect }));
+    .child(diagramView(architecture.mermaid, t, { width: canvasWidth, zoom, components, connections, groups, selectedId, onSelect }));
   const root = v_flex().w_full().flex_none().gap(10)
     .child(h_flex().gap(10).items_center().flex_wrap()
       .child(button(t, "blueprint-show-all", words.showAll, (_e, cx) => onClose(cx),

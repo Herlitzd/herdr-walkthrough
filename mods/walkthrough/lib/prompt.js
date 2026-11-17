@@ -43,7 +43,7 @@ Rules:
 - skipped: for every file with hunks you left out, one entry {path, note}, the path exactly as in the digest. The note is one short line on what changed there, so the reader can trust it without opening it: "Strings for the new dialog in three languages", "Snapshot follows the renamed field", "The same rename as in the CLI". A file whose hunks all belong to steps gets no entry.
 - weight: "key" only for the one or two steps the rest depends on or where the main behaviour lives; "skim" for supporting changes that are safe to skim (docs, wiring, translations, fixtures); "normal" otherwise.
 - Titles name what a step is about ("Retry queue for failed uploads", "Settings drop the legacy toggle"), never the act of reading it ("Look at the tests", "Understand the contract").
-- Write plain sentences in all prose fields: no markdown, no lists, no code fences. The architecture.mermaid field contains Mermaid source. Contract before/after fields contain schema/code excerpts without code fences.
+- Write plain sentences in all prose fields: no headings, lists, emphasis or code fences. Prose is shown as Markdown, so put every identifier, file name, command and code fragment in single backticks (\`__init__\`, \`items.ttl_ms\`); outside backticks, write no *, _ or # that Markdown could read as formatting. The architecture.mermaid field contains Mermaid source. Contract before/after fields contain schema/code excerpts without code fences.
 
 Answer with a single JSON object and nothing else.`;
 

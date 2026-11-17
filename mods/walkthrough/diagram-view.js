@@ -33,8 +33,7 @@ function cachedLayout(source, connections, groups) {
 /**
  * The blueprint, drawn natively in the app's own palette: rounded component
  * cards marked by status, wires with pill labels, dashed boundaries. Existing
- * Mermaid reports need no regeneration. `fontFamily` is kept for callers; the
- * drawing uses the UI font, like the rest of the page.
+ * Mermaid reports need no regeneration. It uses the UI font, like the rest of the page.
  */
 export function diagramView(source, t, { width = 700, zoom = 1, components = [], connections = [], groups = [], selectedId = null, onSelect = null } = {}) {
   let graph;
@@ -76,9 +75,10 @@ export function diagramView(source, t, { width = 700, zoom = 1, components = [],
       .left(group.x * scale + offsetX).top(group.y * scale + header)
       .w(group.width * scale).h(group.height * scale).rounded(14 * scale).border_1().border_dashed()
       .border_color(edge).bg(mix(paper, selected ? t.accent : ink, 0.025))
-      .child(div().id(`diagram-group-title-${group.id}`).absolute().left(12 * scale).top(8 * scale)
-        .max_w(Math.min(220, group.width - 24) * scale).px(8 * scale).py(2 * scale).rounded_full().bg(mix(paper, edge, 0.15))
-        .text_size(10.5 * scale).line_height(1.4).font_semibold().text_color(group.missing ? t.blocked : selected ? t.accent : muted)
+      // The layout keeps 40px above a lane's first card: two lines of title (6 + 2 + 2 × 13.5 + 2) fit in it.
+      .child(div().id(`diagram-group-title-${group.id}`).absolute().left(12 * scale).top(6 * scale)
+        .max_w(Math.min(220, group.width - 24) * scale).px(8 * scale).py(1 * scale).rounded(9 * scale).bg(mix(paper, edge, 0.15))
+        .text_size(10.5 * scale).line_height(1.28).font_semibold().text_color(group.missing ? t.blocked : selected ? t.accent : muted)
         .tooltip(`${group.title}${group.reason ? ": " + group.reason : ""}${group.missing ? " (saved boundary; source changed)" : ""}`)
         .children(group.titleLines.map((text) => div().child(text)))));
   }

@@ -23,7 +23,7 @@ import { toMarkdown, recapMarkdown } from "./lib/export.js";
 import { recapStrings } from "./lib/recap-language.js";
 import { readKey, hunkRead, isRead, markStep, unmarkStep, mergeRead, changedSince } from "./lib/read.js";
 import { readDiff, readPreferences, matters, keyFor, findShown, preparePrompt, fits, promptChars, jobOf, startJob, alive, finished, cancelJob, finishJob, copyText, postComment, claudeVersion, systemLocale, ensureDirs, loadRead, saveRead, transcriptMessages } from "./engine.js";
-import { button, chip, menu, picker, logo, kbd, eyebrow, upper, meter, callout, formatElapsed, formatTokens } from "./ui.js";
+import { button, chip, menu, picker, logo, kbd, tag, eyebrow, upper, meter, callout, pageFrame, PAGE_PADDING, formatElapsed, formatTokens } from "./ui.js";
 import { turnSource, isOpen, firstLine } from "./lib/turns.js";
 import { AUTO, DEFAULT_AUTO, autoOf, startTurns, loadTurns, turnLabel, turnItems, chooseTurn, turnTick, autoGenerate, announce, hookHelp } from "./turnview.js";
 
@@ -67,8 +67,6 @@ const prefs = () => /** @type {any} */ (shared(PREFS)) ?? {};
 const savePrefs = (change) => setShared(PREFS, { ...prefs(), ...change });
 // Task choices are kept per repository and source; past this many the oldest go.
 const MAX_TASK_CHOICES = 100;
-/** A report page's frame: scrolls, with the same margins on every page. */
-const pageFrame = (id) => v_flex().id(id).flex_1().min_h(0).overflow_y_scrollbar().px(28).pt(20).pb(28).gap(14);
 
 /** Each kind of note in its own colour: a decision is not a warning. */
 const noteColor = (t, kind) => ({ choice: t.accent, upkeep: t.ansi6 ?? t.accent, gap: t.ansi3, divergence: t.ansi5 ?? t.ansi3, untested: t.blocked }[kind] ?? t.muted);
@@ -580,7 +578,7 @@ export class Walkthrough {
   /** The width a report page's content has: the panel less the contents column (when shown) and the page's padding. */
   contentWidth() {
     const width = this.width ?? 1000;
-    return Math.max(260, width - (width >= 720 ? 248 : 0) - 48);
+    return Math.max(260, width - (width >= 720 ? 248 : 0) - 2 * PAGE_PADDING);
   }
 
   reportPage(t) {
@@ -1210,7 +1208,9 @@ export class Walkthrough {
     const v = this.view, w = this.shown.entry.walkthrough;
     const uncovered = v.uncovered.length;
     const pages = this.pages(), tailIndex = pages.length - 1;
-    const groupTitle = (title, right = null) => eyebrow(t, title, right).px(8).pt(14).pb(4);
+    // Part titles are the model's, contract labels translated: both upper-cased in the report's language.
+    const lang = this.contractLanguage();
+    const groupTitle = (title, right = null, locale = "en") => eyebrow(t, title, right, locale).px(8).pt(14).pb(4);
     const fresh = v.uncovered.reduce((n, u) => n + u.hunks.filter((h) => !hunkRead(h.id, this.read)).length, 0);
     const changed = new Set(this.changedSteps().map((s) => s.id));
     // The step on screen stays listed, read or not, so the list never loses its place.
@@ -1234,8 +1234,7 @@ export class Walkthrough {
         .when(i === this.step, (e) => e.font_medium())
         .when(read && i !== this.step, (e) => e.text_color(t.dim))
         .when(!(read && i !== this.step) && s.weight === "skim", (e) => e.text_color(t.muted)).child(s.title))
-      .when(s.weight === "key", (e) => e.child(div().flex_none().px(6).h(16).flex().items_center().rounded_full().bg(t.accent + "24")
-        .text_size(9.5).font_semibold().text_color(t.accent).tooltip("Key change: the rest depends on it").child("KEY")));
+      .when(s.weight === "key", (e) => e.child(tag(t, "KEY", t.accent, t.accent + "24", 9.5).tooltip("Key change: the rest depends on it")));
     const total = v.steps.length, done = v.steps.filter((s) => isRead(s, this.read)).length;
     // The summary is cut to its first few lines until asked for; the steps stay in view.
     const long = (w.summary ?? "").length > SUMMARY_CHARS;
@@ -1246,8 +1245,8 @@ export class Walkthrough {
       .when(long, (e) => e.child(div().id("summary-more").px(8).pt(2).text_size(11.5).text_color(t.accent).cursor_pointer()
         .on_click((_e, cx) => { this.summaryOpen = !this.summaryOpen; cx.notify(); }).child(this.summaryOpen ? "Show less" : "Show more")))
       .child(h_flex().mt(12).mx(8).gap(8).items_center()
-        .child(meter(t, 150, total ? done / total : 0, done === total && total ? t.ansi2 : t.accent))
-        .child(div().text_size(11).text_color(t.dim).child(`${done} of ${total} read`)))
+        .child(meter(t, 104, total ? done / total : 0, done === total && total ? t.ansi2 : t.accent))
+        .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(`${done} of ${total} read`)))
       .when(this.unreadOnly, (e) => e.child(h_flex().px(8).pt(8).gap(6).items_center().text_size(11).text_color(t.accent)
         .child(div().child("Unread only")).child(div().text_color(t.dim).child("· u shows all"))))
       .child(groupTitle("Overview"))
@@ -1258,15 +1257,14 @@ export class Walkthrough {
           .tooltip(tv.total ? `${tv.met} of ${tv.total} request${tv.total === 1 ? "" : "s"} show up in this diff (t)` : "The task names nothing concrete (t)")
           .child(badge().bg(t.accent + "24").text_color(t.accent).child("◎"))
           .child(div().flex_1().text_size(12.5).child("Task"))
-          .child(div().flex_none().px(6).h(16).flex().items_center().rounded_full().bg(tv.met < tv.total ? t.ansi3 + "24" : t.raised)
-            .text_size(10.5).font_semibold().text_color(tv.met < tv.total ? t.ansi3 : t.dim).child(tv.total ? `${tv.met} / ${tv.total}` : "—")));
+          .child(tv.met < tv.total ? tag(t, `${tv.met} / ${tv.total}`, t.ansi3, t.ansi3 + "24") : tag(t, tv.total ? `${tv.met} / ${tv.total}` : "—")));
       })
-      .when(pages.some((p) => p.kind === "contract"), (e) => e.child(groupTitle(contractStrings(this.contractLanguage()).contracts)))
+      .when(pages.some((p) => p.kind === "contract"), (e) => e.child(groupTitle(contractStrings(lang).contracts, null, lang)))
       .children(pages.flatMap((page, index) => page.kind === "contract" ? [
         stepRow({ id: `contract-${page.contract.kind}`, title: page.title, position: CONTRACT_ICON[page.contract.kind] ?? "◇" }, index),
       ] : []))
       .children(parts.flatMap(({ part, steps }) => [
-        groupTitle(part.title, `${part.steps.filter((s) => isRead(s, this.read)).length} / ${part.steps.length}`),
+        groupTitle(part.title, `${part.steps.filter((s) => isRead(s, this.read)).length} / ${part.steps.length}`, lang),
         ...steps.map((s) => stepRow(s, this.pageIndex("step", s.id))),
       ]))
       .when(this.unreadOnly && !parts.length, (e) => e.child(div().px(8).pt(12).text_size(12).text_color(t.muted).child("Every step is read.")))
@@ -1274,8 +1272,7 @@ export class Walkthrough {
       .child(row("toc-tail", tailIndex)
         .child(badge().bg(t.raised).text_color(t.dim).child("…"))
         .child(div().flex_1().text_size(12.5).text_color(t.muted).child("Not covered"))
-        .child(div().flex_none().px(6).h(16).flex().items_center().rounded_full().bg(fresh ? t.accent + "24" : t.raised)
-          .text_size(10.5).font_semibold().text_color(fresh ? t.accent : t.dim).child(String(uncovered)))
+        .child(fresh ? tag(t, String(uncovered), t.accent, t.accent + "24") : tag(t, String(uncovered)))
         .when(fresh > 0, (e) => e.tooltip(`${fresh} hunk${fresh === 1 ? "" : "s"} not read`)))
       .child(div().px(8).pt(14).text_size(10.5).line_height(1.5).text_color(t.dim).child(this.meta()));
   }
@@ -1294,7 +1291,8 @@ export class Walkthrough {
     const read = isRead(s, this.read);
     return pageFrame(`page-${s.id}-${this.shown.entry.generatedAt}`)
       .child(h_flex().gap(8).items_center()
-        .child(eyebrow(t, `${part.title}  ·  Step ${s.position} of ${total}`).flex_1())
+        // The part title in the report's language, the rest in English: each upper-cased by its own rules.
+        .child(eyebrow(t, `${upper(part.title, this.contractLanguage())}  ·  ${upper(`Step ${s.position} of ${total}`)}`).flex_1())
         .child(button(t, "read-toggle", read ? "✓ Read" : "Mark read", (_e, cx) => { this.toggleRead(); cx.notify(); }, {
           kind: read ? "soft" : "outline", small: true, disabled: s.outdated,
           tooltip: s.outdated ? "Its code has changed: regenerate to read it as it is now" : read ? "Mark unread (x)" : "Mark read (x)",
@@ -1326,6 +1324,7 @@ export class Walkthrough {
   /** Recap with a native, local diagram; source remains available on demand. */
   recap(t) {
     const w = this.shown.entry.walkthrough;
+    // The blueprint card's own padding (12 a side) and border (1 a side).
     const available = this.contentWidth() - 26;
     const omitted = (w.omitted?.recap ?? 0) + (w.omitted?.contracts ?? 0);
     const language = this.contractLanguage(), words = recapStrings(language);
@@ -1345,7 +1344,7 @@ export class Walkthrough {
         .child(div().text_size(13.5).line_height(1.55).font_medium().child(TextView.markdown(`recap-change-text-${i}`, c.description)))
         .child(h_flex().gap(8).items_start()
           .child(div().flex_none().pt(2).text_size(10.5).font_semibold().text_color(t.dim).child(upper(words.motivation, words.tag)))
-          .child(div().flex_1().min_w(0).text_size(12.5).line_height(1.55).text_color(t.muted).child(c.motivation)))
+          .child(div().flex_1().min_w(0).text_size(12.5).line_height(1.55).text_color(t.muted).child(TextView.markdown(`recap-motivation-${i}`, c.motivation))))
         .child(h_flex().gap(6).flex_wrap().children(c.paths.map(filePill))));
     return pageFrame(`recap-${this.shown.entry.generatedAt}`)
       .child(eyebrow(t, words.recap, null, words.tag))
@@ -1365,7 +1364,7 @@ export class Walkthrough {
             .child(button(t, "diagram-source", this.diagramSource ? "Hide Mermaid" : "Mermaid source", (_e, cx) => { this.diagramSource = !this.diagramSource; cx.notify(); }, { small: true, kind: "ghost" })))
           .child(blueprintView(w.recap.architecture, t, {
             words,
-            width: available, zoom: this.diagramZoom, fontFamily: settings().font_family,
+            width: available, zoom: this.diagramZoom,
             files: this.diff?.files ?? [], selectedId: this.diagramSelected, fileTargets: (path) => this.blueprintTargets(path),
             onSelect: (id, cx) => { this.diagramSelected = id; cx.notify(); },
             onFile: (path, cx) => this.goToBlueprintFile(path, cx),
@@ -1519,8 +1518,11 @@ export class Walkthrough {
       .child(button(t, "next", next && next.kind !== "step" ? `${next.title} →` : "Next →", (_e, cx) => { this.move(1); cx.notify(); }, { kind: "solid", small: true, disabled: this.step >= pages.length - 1 }))
       .child(h_flex().pl(6).gap(8).items_center()
         .child(meter(t, 72, steps ? read / steps : 0, read === steps && steps ? t.ansi2 : t.accent))
-        .child(div().text_size(11.5).text_color(t.dim).child(page?.kind === "tail" ? `End · ${read} / ${steps} read` : `${read} / ${steps} read`)))
-      .when(wide, (e) => e.child(h_flex().pl(4).gap(4).items_center().text_size(11).text_color(t.dim).child(kbd(t, "←")).child(kbd(t, "→")).child(div().pl(2).child("to move"))))
+        // A page that isn't a step is named, so the footer says where the reader is as well as how far.
+        .child(div().text_size(11.5).text_color(t.dim).child(page?.kind === "tail" ? `End · ${read} / ${steps} read`
+          : page?.kind === "step" ? `${read} / ${steps} read` : `${page?.title ?? ""} · ${read} / ${steps} read`)))
+      .child(h_flex().id("footer-keys").pl(4).gap(4).items_center().text_size(11).text_color(t.dim).tooltip("← → (or j k) move between pages")
+        .child(kbd(t, "←")).child(kbd(t, "→")).when(wide, (e) => e.child(div().pl(2).child("to move"))))
       .child(button(t, "unread-only", this.unreadOnly ? "Show all" : "Unread only", (_e, cx) => { this.unreadOnly = !this.unreadOnly; cx.notify(); },
         { kind: "ghost", small: true, tooltip: this.unreadOnly ? "List every step again (u)" : "List and step through only the steps not read yet (u)" }))
       .child(div().flex_1())

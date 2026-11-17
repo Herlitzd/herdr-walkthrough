@@ -90,7 +90,7 @@ test('branch, loop, long and parallel edges keep labels inside the canvas and of
 });
 
 test('new generation schema and localized prompt require evidence, not labels on every edge', () => {
-  assert.equal(PROMPT_VERSION, 2);
+  assert.equal(PROMPT_VERSION, 3);
   assert.ok(SCHEMA.properties.recap.properties.architecture.required.includes('connections'));
   const p = buildPrompt({ digest: 'diff', fileCount: 1, hunkCount: 1, what: 'Changes', language: 'pl' });
   assert.match(p.system, /Omit unsupported labels/);

@@ -238,6 +238,17 @@ export function mermaidWithConnections(source, connections = [], groups = []) {
 
 const intersects = (a, b, pad = 0) => a.x < b.x + b.width + pad && a.x + a.width + pad > b.x && a.y < b.y + b.height + pad && a.y + a.height + pad > b.y;
 
+/**
+ * A label pill's size for one line of 10.5px medium UI text (proportional, so
+ * by the letters it holds, generously), with the pill's padding and border.
+ */
+function labelWidth(line) {
+  let w = 0;
+  for (const ch of line) w += /[ilj.,:;'|!]/.test(ch) ? 3.4 : /[ \-ftr()]/.test(ch) ? 4.2 : /[mwMW@%]/.test(ch) ? 9.4 : /[A-Z0-9#&]/.test(ch) ? 7.6 : 6.3;
+  return Math.ceil(w + 26);
+}
+const labelHeight = (lines) => lines.length * 14.5 + 9;
+
 /** Place small callouts near their own connector, avoiding cards, other labels
  * and unrelated wires. Dense diagrams use a reserved outer callout gutter. */
 function placeConnectionLabels(graph) {
@@ -245,7 +256,7 @@ function placeConnectionLabels(graph) {
   for (const [index, edge] of graph.edges.entries()) {
     if (!edge.label) continue;
     let lines = wrapLabel(edge.label, 24);
-    let width = Math.max(60, ...lines.map((s) => s.length * 6 + 16)), height = lines.length * 14 + 10;
+    let width = Math.max(60, ...lines.map(labelWidth)), height = labelHeight(lines);
     const segments = edge.points.slice(1).map((b, i) => ({ a: edge.points[i], b }));
     const candidates = [];
     for (const { a, b } of segments) {
@@ -278,8 +289,8 @@ function placeConnectionLabels(graph) {
     if (!position) {
       // Numbered gutter callouts avoid drawing a new leader across cards.
       lines = wrapLabel(`${index + 1}. ${edge.label}`, 24);
-      width = Math.max(60, ...lines.map((s) => s.length * 6 + 16));
-      height = lines.length * 14 + 10;
+      width = Math.max(60, ...lines.map(labelWidth));
+      height = labelHeight(lines);
       const anchor = edge.points[Math.floor(edge.points.length / 2)];
       position = { x: originalWidth + 16, y: Math.max(12, anchor[1] - height / 2), anchor, detached: true, number: index + 1 };
       while (boxes.some((box) => intersects({ ...position, width, height }, box, 6))) position.y += height + 8;

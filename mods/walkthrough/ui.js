@@ -44,6 +44,14 @@ export const chip = (t, text, color, fill) => div().flex_none().px(8).h(20).flex
   .when(Boolean(fill), (e) => e.bg(fill)).when(!fill, (e) => e.border_1().border_color(color ? color + "66" : t.border))
   .text_size(11).font_medium().text_color(color ?? t.muted).child(text);
 
+/** A 16px pill for a count or a short tag in a row: `color` on `fill`. */
+export const tag = (t, text, color = t.dim, fill = t.raised, size = 10.5) => div().flex_none().px(6).h(16).flex().items_center().rounded_full()
+  .bg(fill).text_size(size).font_semibold().text_color(color).child(text);
+
+/** A report page's frame: scrolls, with the same margins on every page (the width maths in view.js's contentWidth follow them). */
+export const PAGE_PADDING = 28;
+export const pageFrame = (id) => v_flex().id(id).flex_1().min_h(0).overflow_y_scrollbar().px(PAGE_PADDING).pt(20).pb(28).gap(14);
+
 /** A key cap, for the shortcuts shown beside what they do. */
 export const kbd = (t, text) => div().flex_none().px(5).h(18).min_w(18).flex().items_center().justify_center().rounded(5)
   .border_1().border_color(t.border).bg(t.raised).text_size(10.5).font_medium().text_color(t.muted).child(text);

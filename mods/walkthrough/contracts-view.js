@@ -1,7 +1,7 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { contractStrings } from "./lib/contract-language.js";
-import { button, chip, upper } from "./ui.js";
+import { button, chip, upper, pageFrame } from "./ui.js";
 
 /** Side-by-side entity/field cards, with vertical comparison in narrow panes. */
 export function contractPage(page, t, { language = "en", width = 700, sourceOpen = false, onToggleSource = () => {}, source = null, missing = 0, changeEvidence = [], openChanges = new Set(), onToggleChange = () => {}, renderChangeSource = () => null, onGoToStep = () => {} } = {}) {
@@ -12,7 +12,7 @@ export function contractPage(page, t, { language = "en", width = 700, sourceOpen
   const state = (value, after) => v_flex().flex_1().min_w(0).rounded(10).border_1().border_color((after ? t.ansi2 : t.ansi1) + "40").bg((after ? t.ansi2 : t.ansi1) + "0d").p(12).gap(7)
     .child(div().text_size(10).font_semibold().text_color(after ? t.ansi2 : t.ansi1).child(upper(after ? words.after : words.before, language)))
     .child(div().text_size(12).line_height(1.6).font_family("JetBrains Mono").text_color(value ? t.foreground : t.dim).child(value || (after ? words.removed : words.absent)));
-  return v_flex().id(`contracts-${page.kind}`).flex_1().min_h(0).overflow_y_scrollbar().px(28).pt(20).pb(28).gap(14)
+  return pageFrame(`contracts-${page.kind}`)
     .child(h_flex().items_center().gap(8).flex_wrap()
       .child(chip(t, words.kinds[page.kind], t.accent, t.accent + "15"))
       .child(chip(t, words.compatibility[page.compatibility], color, color + "18")))

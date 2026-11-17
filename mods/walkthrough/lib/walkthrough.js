@@ -14,7 +14,7 @@ import { idOf } from "./alias.js";
 
 export const VERSION = 1;
 // Part of every cache key: a different prompt writes a different walkthrough.
-export const PROMPT_VERSION = 2;
+export const PROMPT_VERSION = 3;
 
 export const LIMITS = { parts: 6, steps: 16, hunksPerStep: 14, partTitle: 28, notes: 6, notesPerStep: 2, skipped: 200, asks: 12, askText: 200 };
 export const WEIGHTS = ["key", "normal", "skim"];

@@ -224,9 +224,9 @@ A dialog 74% of the window wide and 80% tall (`modal`), on `theme().popover`; as
        has its hunk label in `accent` on `accent` + `1f`, starting "●".
 4. **Footer** (with a walkthrough), 52px, on `surface`, top border: "← Previous" (outline;
    disabled on the first page), "Next →" (solid; the next page's title when it isn't a step:
-   "Task →", "API →", "Not covered →"), a 72px meter with "2 / 5 read" (or "End · 2 / 5
-   read"), from 900px "← → to move" with the arrows as key caps, a ghost "Unread only" /
-   "Show all";
+   "Task →", "API →", "Not covered →"), a 72px meter with "2 / 5 read" ("Recap · 2 / 5 read"
+   on a page that isn't a step, "End · 2 / 5 read" on Not covered), ← → as key caps
+   ("to move" beside them from 900px), a ghost "Unread only" / "Show all";
    at the right, on the Pull request tab, a ghost "Post to #12", then a ghost "Copy as
    Markdown", the last send's, copy's or post's result (in `ansi2` with a ✓ when it
    worked), "Click a line to comment" or "2 comments", and with
