@@ -214,3 +214,12 @@ test('a new report whose components were all left out does not claim to predate 
   delete p.shown.entry.walkthrough.recap.architecture.components;
   assert.match(text(p.reportPage(colors)),/predates component details/);
 });
+test('a newer release shows the update strip; Later and Stop checking go to the updater', () => {
+  const p=panel(),calls=[];
+  p.update={available:()=>({tag:'v9.9.9',url:'https://github.com/dmazlum/herdr-walkthrough/releases/tag/v9.9.9'}),dismiss:(tag)=>calls.push(['later',tag]),stop:()=>calls.push(['stop'])};
+  const strip=p.updateStrip(colors,p.update.available());
+  assert.match(text(strip),/Walkthrough v9\.9\.9 is out/);assert.match(text(strip),/you have 0\.9\.0/);
+  assert.ok(find(strip,'update-copy'));assert.ok(find(strip,'update-notes'));
+  click(strip,'update-later');click(strip,'update-stop');
+  assert.deepEqual(calls,[['later','v9.9.9'],['stop']]);
+});

@@ -254,15 +254,26 @@ Then merge [`keys.json`](keys.json) into `~/.config/herdr-app/keys.json` for **�
 
 ## Updating
 
-Herdr doesn't update mods you added yourself. To hear about new versions, watch this repo
-for releases (**Watch → Custom → Releases**). Each
-[release](https://github.com/dmazlum/herdr-walkthrough/releases) says what changed, and
-whether `keys.json` did.
+Herdr doesn't update mods you added yourself: yours is a copy. So the walkthrough checks
+for you: at most once a day, while it is open, it asks GitHub's public releases API for
+the latest release (no token, nothing about you, your repositories or your code). When a
+newer one is out, a strip under the title says so, links to **What changed**, and gives
+you the prompt to hand your agent:
 
-Your version is `"version"` in `~/.config/herdr-app/mods/walkthrough/mod.json`. To update,
-ask your agent to *replace* that folder with the latest `mods/walkthrough` from
-`github.com/dmazlum/herdr-walkthrough`. Asking it to add the mod again isn't enough: it
-would add a second copy under a new name. Or by hand:
+> Update the Walkthrough mod from github.com/dmazlum/herdr-walkthrough to its latest release
+
+**Copy prompt** puts it on your clipboard. The agent follows
+[RECIPE.md](RECIPE.md#updating-it-for-the-agent-doing-it): it replaces the installed
+folder in place (adding the mod again isn't enough: an agent never overwrites a mod and
+would add a second copy under a new name) and merges `keys.json` again if the release
+changed it. **Later** hides that release until the next one; **Stop checking** turns the
+check off for good, as does `CHECK = false` in `mods/walkthrough/lib/update.js` (an update
+puts it back).
+
+Your version is `"version"` in `~/.config/herdr-app/mods/walkthrough/mod.json`. You can
+also watch this repo for releases (**Watch → Custom → Releases**). Each
+[release](https://github.com/dmazlum/herdr-walkthrough/releases) says what changed, and
+whether `keys.json` did. To update by hand:
 
 ```sh
 git -C herdr-walkthrough pull          # or clone it again
