@@ -8,6 +8,41 @@ change and never judges it.
 
 ![Walkthrough](preview.png)
 
+## Recap, blueprint and contracts
+
+The first page is Recap, with a native interactive blueprint. The optional Task page
+follows Recap. Components show validated change status, role and changes, source-file
+navigation, connection labels and evidence-based groups. Selecting a component highlights
+its direct connections; Show all clears that focus. Source-file links navigate to the
+matching reading section, or to the relevant Contract or Not covered page.
+
+Conditional database, Protobuf and API contract pages follow Recap and Task before the
+code steps. Each change has a before/after comparison, its own exact source diff toggle
+and links to matching walkthrough steps. Stale source and changes without a matching step
+are marked. Contract and Recap labels (`lib/contract-language.js`, `lib/recap-language.js`),
+in the UI and the Markdown, follow the saved report's language (not the picker's); a few
+blueprint hints and the step labels are English. Generation explicitly
+requests the chosen language. Existing wrong-language prose needs regeneration. Older
+reports remain readable; new metadata requires regeneration.
+
+Only steps are required of an answer. `normalize` checks the recap, blueprint and
+contracts against the digest and leaves out what doesn't hold up, counting it in
+`walkthrough.omitted` ({ recap, contracts }) for a note on Recap: a recap change without
+a motivation or a real path; a diagram outside the subset (the blueprint goes, the
+description stays); a component, connection or group without real resulting evidence; a
+contract change without evidence or states to compare, and a page left with none.
+Recap paths no change names go to `recap.other`; generated and unread files are listed in
+the prompt (contents not sent) and count as recap paths. Aliases are read as in steps (`[h1]`,
+spaces). The Mermaid subset accepts `graph`, trailing `;`, `A-->B`, unquoted `A[Label]`
+and `%%` comments, and is stored in one canonical spelling without inline labels or
+subgraphs: only source-backed connections and groups draw those. A repeated edge is kept
+once, and an id Mermaid reserves (`end`, `click`, …) gets a trailing `_` everywhere. A report opens on Recap
+while none of its steps is read, else on its first unread step.
+
+All pages share one reading order. Persistent hunk read tracking counts only code steps;
+unread-only navigation retains Recap, Task, Contracts and Not covered. The toolbar's source
+and model/language controls stack at narrow widths to avoid overlapping.
+
 ## What you see
 
 A dialog 74% of the window wide and 80% tall (`modal`), on `theme().popover`; as a pane, on
@@ -314,8 +349,8 @@ A dialog 74% of the window wide and 80% tall (`modal`), on `theme().popover`; as
   `shared("walkthrough.prefs")`. The first language is the system's (`defaults read -g
   AppleLanguages`, else `$LANG`).
 - Keys from `keys.json`: `cmd-shift-k` → `mod.open:walkthrough`. Mod commands:
-  `walkthrough.generate`, `.cancel`, `.next`, `.prev`, `.copy`, `.unread`, `.task` (opens the task editor). In the view, `x`
-  marks the step read or unread, `u` toggles Unread only and `t` opens the task page.
+  `walkthrough.generate`, `.cancel`, `.next`, `.prev`, `.copy`, `.unread`, `.task` (opens the task editor), `.recap`. In the view, `x`
+  marks the step read or unread, `u` toggles Unread only, `t` opens the task page and `r` Recap.
 
 ## Built from
 

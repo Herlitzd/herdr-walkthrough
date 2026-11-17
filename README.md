@@ -28,6 +28,32 @@ click? Add the two [Last turn hooks](#last-turn).
 
 ## What you get
 
+### Architecture overview and contracts
+
+The first page is **Recap**: what changed, why, and a native architecture blueprint.
+Select a component to inspect its role, change status and source files, or focus on its
+direct connections. Source-backed labels explain connections, and groups show evidenced
+architecture boundaries. File links jump to the walkthrough section that explains them.
+
+When the diff changes a database schema, Protobuf definition or public API contract,
+**Contracts** pages follow Recap and the optional Task page. Each change shows before/after
+excerpts, compatibility impact, deployment order when established, its exact supporting
+diff and links to matching code steps. Missing evidence and changes without a matching
+step are marked. Generated explanations follow the chosen language, and so do the Recap
+and Contracts pages' own labels, in the app and in the copied Markdown; a few blueprint
+hints and the step labels are in English for now.
+
+Steps are the only part a report must have. A recap, blueprint or contract detail that
+doesn't hold up against the diff (a diagram outside the supported subset, a component or
+label citing a hunk that isn't there) is left out, and Recap says so; the run is never
+lost over it. Files no recap change names, including generated files and ones not read
+(too many or too large), are listed under **Other changes**.
+
+Older reports remain readable. Regenerate them to add blueprint metadata or contract pages,
+or to replace explanations generated in the wrong language. Source toggles and step links
+work with existing reports that already contain the required evidence. Read tracking,
+Last turn and task mapping work across the additional pages.
+
 ### A diff you can read top to bottom
 
 - **Steps in reading order.** Related edits across files become one step. Types and entry
@@ -109,6 +135,7 @@ says *where* a request shows up, never whether it's done well.
 | **x** | Mark the step read or unread |
 | **u** | Unread only: step through only what you haven't read |
 | **t** | The task page (**←** from the first step goes there too) |
+| **r** | The Recap page |
 | **Esc** | Close a picker, the task editor or a comment, then the dialog |
 
 <details>
@@ -118,7 +145,7 @@ says *where* a request shows up, never whether it's done well.
 | --- | --- |
 | **Matched against** menu | Found (default), Your own… (write it), or Off; kept per repository and tab |
 | Last turn → **⚡ Auto** | On (default): write the last turn's walkthrough without a click. One click turns it off: only on Generate |
-| `walkthrough.generate`, `.cancel`, `.next`, `.prev`, `.copy`, `.unread`, `.task` | Generate, cancel, move, Copy as Markdown, Unread only and write your own task |
+| `walkthrough.generate`, `.cancel`, `.next`, `.prev`, `.copy`, `.unread`, `.task`, `.recap` | Generate, cancel, move, Copy as Markdown, Unread only, write your own task and go to Recap |
 
 </details>
 
