@@ -9,7 +9,7 @@
 // the tests can run it under node.
 
 /** The installed version: the same as mod.json and package.json (test/version.test.js). */
-export const VERSION = "0.9.0";
+export const VERSION = "0.10.0";
 const CHECK = true;
 export const REPO = "dmazlum/herdr-walkthrough";
 export const RELEASES = `https://github.com/${REPO}/releases`;
