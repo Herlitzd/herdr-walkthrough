@@ -6,6 +6,7 @@ import { buildDigest } from '../mods/walkthrough/lib/digest.js';
 import { normalize, overlay, overlayAsks, schemaFor } from '../mods/walkthrough/lib/walkthrough.js';
 import { reportPages } from '../mods/walkthrough/lib/navigation.js';
 import { isRead } from '../mods/walkthrough/lib/read.js';
+import { VERSION } from '../mods/walkthrough/lib/update.js';
 
 const asUrl = (s) => 'data:text/javascript;base64,' + Buffer.from(s).toString('base64');
 const bindings = asUrl(`
@@ -218,7 +219,7 @@ test('a newer release shows the update strip; Later and Stop checking go to the 
   const p=panel(),calls=[];
   p.update={available:()=>({tag:'v9.9.9',url:'https://github.com/dmazlum/herdr-walkthrough/releases/tag/v9.9.9'}),dismiss:(tag)=>calls.push(['later',tag]),stop:()=>calls.push(['stop'])};
   const strip=p.updateStrip(colors,p.update.available());
-  assert.match(text(strip),/Walkthrough v9\.9\.9 is out/);assert.match(text(strip),/you have 0\.9\.0/);
+  assert.match(text(strip),/Walkthrough v9\.9\.9 is out/);assert.ok(text(strip).includes(`you have ${VERSION}`));
   assert.ok(find(strip,'update-copy'));assert.ok(find(strip,'update-notes'));
   click(strip,'update-later');click(strip,'update-stop');
   assert.deepEqual(calls,[['later','v9.9.9'],['stop']]);
