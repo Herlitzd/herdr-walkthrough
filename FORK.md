@@ -12,6 +12,7 @@ for anything else. Changes are marked in the code with `// Local patch (<name>)`
 | machine | `machine.js` stands in for herdr's `exec`, `readTextFile`, `writeTextFile`, `watchFolder`, `home` and `appHome`, pointed at the space's machine. `exec` gets the PATH of an interactive bash there (so `claude` in `~/.local/bin` is found); writes go through `exec` in pieces (it takes no input, and an argument is at most 128 KB); folder watching is a 3-second poll with `find -newermt` (the app can't watch the machine's folders). With no machine, everything is herdr's own |
 | machine (launch) | a generation is started with `systemd-run --user` when there is one: herdr-core's exec ends every process the command started when it returns, `nohup` and `setsid` ones too, so the background run died at once |
 | machine (copy) | Copy as Markdown uses the app's clipboard (`cx.write_to_clipboard`); there's no pbcopy, wl-copy or xclip on WSL |
+| machine (test) | `test/upstream-integration.test.js` stubs `machine.js` like the other native modules, since it imports herdr |
 | pr | `props.on` (the machine) and `props.pr` (a PR number to open on). Paddock's PR row passes them, opening the walkthrough in a `Walk #n` tab in the space |
 
 The key here is `ctrl-shift-r` (`ctrl-shift-k`, upstream's on Windows, is Herdr's picker). The Last turn hooks

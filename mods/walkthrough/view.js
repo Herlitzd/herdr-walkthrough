@@ -1,10 +1,18 @@
+import { contractStrings } from "./lib/contract-language.js";
+import { contractChangeEvidence, contractChangeTargets } from "./lib/contract-evidence.js";
+import { contractPage } from "./contracts-view.js";
+import { reportPages, blueprintFileTargets } from "./lib/navigation.js";
 // The walkthrough: a change read in the order it makes sense, one step at a
 // time, with the code each step talks about under it.
 
+import { mermaidWithConnections } from "./lib/diagram.js";
+import { blueprintView } from "./blueprint-view.js";
 import { div } from "gpui-kit";
-import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, VirtualListScrollHandle } from "gpui-base";
-import { spaces, panes, focused, agents, theme, props, closeOverlay, hc, nextCommand, settings, shared, setShared } from "herdr";
-// Local patch (machine): git, claude and files on the space's machine (machine.js).
+import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, VirtualListScrollHandle, TextView } from "gpui-base";
+import { spaces, panes, focused, agents, theme, props, closeOverlay, hc, nextCommand, settings, shared, setShared, notify } from "herdr";
+import * as herdr from "herdr";
+import { updater, VERSION, PROMPT, RELEASES } from "./lib/update.js";
+// Local patch (machine): git, the backend and files on the space's machine (machine.js).
 import { exec, watchFolder, useMachine } from "./machine.js";
 import { SCOPES, repoAt, currentHead, defaultBase, baseChoices, recentCommits, pullRequests, sourceKey, commitMessage, taskSince } from "./lib/sources.js";
 import { overlay, fileTotals, overlayAsks, asksOf } from "./lib/walkthrough.js";
@@ -12,15 +20,16 @@ import { TASK_MODES, taskChoice, resolveTask, taskKey, taskCacheKey, clip, MAX_T
 import { numberLines, hunkLabel, numberDigits } from "./lib/hunks.js";
 import { tokenize } from "./lib/highlight.js";
 import { LANGUAGES, languageOf, fromLocale } from "./lib/languages.js";
-import { MODELS, DEFAULT_MODEL, modelOf } from "./lib/job.js";
+import { BACKENDS, DEFAULT_BACKEND, backendOf, modelsOf, modelFor, modelOf } from "./lib/job.js";
 import { estimateTokens, codeKey, placeKey, MAX_PROMPT_CHARS } from "./lib/cache.js";
 import { formatComments, addComment, sameSpot } from "./lib/comments.js";
-import { toMarkdown } from "./lib/export.js";
+import { toMarkdown, recapMarkdown } from "./lib/export.js";
+import { recapStrings } from "./lib/recap-language.js";
 import { readKey, hunkRead, isRead, markStep, unmarkStep, mergeRead, changedSince } from "./lib/read.js";
-import { readDiff, readPreferences, matters, keyFor, findShown, preparePrompt, fits, promptChars, jobOf, startJob, alive, finished, cancelJob, finishJob, copyText, postComment, claudeVersion, systemLocale, ensureDirs, loadRead, saveRead, transcriptMessages } from "./engine.js";
-import { button, chip, menu, picker, formatElapsed, formatTokens } from "./ui.js";
+import { readDiff, readPreferences, matters, keyFor, findShown, preparePrompt, fits, promptChars, jobOf, startJob, alive, finished, cancelJob, finishJob, copyText, postComment, backendVersion, systemLocale, ensureDirs, loadRead, saveRead, transcriptMessages } from "./engine.js";
+import { button, chip, menu, picker, logo, kbd, tag, eyebrow, upper, meter, callout, pageFrame, PAGE_PADDING, formatElapsed, formatTokens } from "./ui.js";
 import { turnSource, isOpen, firstLine } from "./lib/turns.js";
-import { AUTO, DEFAULT_AUTO, autoOf, startTurns, loadTurns, turnLabel, turnItems, chooseTurn, turnTick, autoGenerate, announce, hookHelp } from "./turnview.js";
+import { AUTO, DEFAULT_AUTO, autoOf, startTurns, loadTurns, turnLabel, turnItems, chooseTurn, turnTick, autoGenerate, announce, hookHelp, startRecorder, stopRecorder } from "./turnview.js";
 
 const PREFS = "walkthrough.prefs";
 // Lines drawn on one page; a step past this says how many it leaves out.
@@ -62,6 +71,18 @@ const prefs = () => /** @type {any} */ (shared(PREFS)) ?? {};
 const savePrefs = (change) => setShared(PREFS, { ...prefs(), ...change });
 // Task choices are kept per repository and source; past this many the oldest go.
 const MAX_TASK_CHOICES = 100;
+
+/** Under `herdr-app check` the mod is drawn once and runs nothing: no GitHub request. */
+const checking = () => {
+  try { return typeof herdr.checking === "function" && herdr.checking() === true; }
+  catch { return false; }
+};
+
+/** Each kind of note in its own colour: a decision is not a warning. */
+const noteColor = (t, kind) => ({ choice: t.accent, upkeep: t.ansi6 ?? t.accent, gap: t.ansi3, divergence: t.ansi5 ?? t.ansi3, untested: t.blocked }[kind] ?? t.muted);
+
+/** Contract pages in the contents: a table, a message, an endpoint. */
+const CONTRACT_ICON = { database: "▤", protobuf: "{}", api: "⇄" };
 const COVERAGE_MARK = { seen: "✓", partly: "◐", absent: "○" };
 const COVERAGE_ABOUT = {
   seen: "The diff carries this request out",
@@ -84,7 +105,9 @@ export class Walkthrough {
     this.tab = (p.pane && panes().find((x) => x.pane === p.pane)?.tab) || focused()?.tab || null; // a pane watches this tab's agents
     const saved = prefs();
     this.scope = SCOPES.some((s) => s.key === p.scope) ? p.scope : SCOPES.some((s) => s.key === saved.scope) ? saved.scope : "uncommitted";
-    this.model = MODELS.some((m) => m.key === saved.model) ? saved.model : DEFAULT_MODEL;
+    this.backend = BACKENDS.some((b) => b.key === saved.backend) ? saved.backend : DEFAULT_BACKEND;
+    // A model saved for another backend (or no longer offered) gives way to this backend's default, as the model picker shows.
+    this.model = modelFor(this.backend, saved.model);
     this.language = saved.language ?? null; // null until the system's is read
     this.repo = undefined; // undefined: looking, null: not in git
     this.base = null;
@@ -98,6 +121,8 @@ export class Walkthrough {
     this.turns = [];
     this.turnPinned = false;
     this.summaryOpen = false; // the sidebar's summary, shown whole
+    this.record = saved.recordTurns === true; // record the turns of agents with no hooks while open (turnview.js)
+    this.treeChangedAt = 0; // when the working tree last changed, for the recorder
     this.auto = AUTO.some((a) => a.key === saved.autoGenerate) ? saved.autoGenerate : DEFAULT_AUTO;
     this.autoTried = new Set(); // turns already considered for a walkthrough without a click
     this.autoWanted = null;
@@ -105,7 +130,7 @@ export class Walkthrough {
     this.background = []; // walkthroughs written without a click, followed to their end: { job }
     this.confirmPost = false;
     this.posting = false;
-    this.claude = undefined;
+    this.cli = undefined; // the backend's version: undefined while looking, null when it can't be started
     this.diff = null;
     this.cacheKey = null;
     this.shown = null; // { entry, exact }
@@ -124,11 +149,18 @@ export class Walkthrough {
     this.loading = false;
     this.error = null;
     this.genError = null;
-    this.step = 0; // index into view.steps; steps.length is the "Not covered" page
+    this.diagramZoom = 1;
+    this.diagramSource = false;
+    this.diagramSelected = null;
+    this.navigationFile = null;
+    this.step = 0; // index into reportPages: Recap always first
+    this.visitedPages = new Set(["recap"]);
     this.read = {}; // the repository's read hunks, { "<path>:<digest>": ms }
     this.readChanged = new Set(); // keys marked or unmarked here and not yet written
     this.unreadOnly = false; // the contents and ← → skip read steps
     this.openFiles = new Set();
+    this.openContracts = new Set();
+    this.openContractChanges = new Set();
     this.comments = [];
     this.target = null; // { sk, scope, path, line, kind, code }: the line a comment is being written on
     this.agentTo = null;
@@ -155,9 +187,9 @@ export class Walkthrough {
     cx.spawn(async (cx) => {
       if (!this.folder || this.remote) { this.repo = null; cx.notify(); return; }
       await useMachine(this.machine);
-      const [repo, claude, locale] = await Promise.all([repoAt(exec, this.folder).catch(() => null), claudeVersion(), this.language ? null : systemLocale()]);
+      const [repo, cli, locale] = await Promise.all([repoAt(exec, this.folder).catch(() => null), backendVersion(this.backend), this.language ? null : systemLocale()]);
       this.repo = repo;
-      this.claude = claude;
+      this.cli = cli;
       if (!this.language) this.language = fromLocale(locale);
       if (!repo) { cx.notify(); return; }
       await ensureDirs();
@@ -171,12 +203,16 @@ export class Walkthrough {
       this.commit = commits[0] ?? null;
       if (this.scope === "pr") await this.loadPullRequests();
       await startTurns(this, cx);
+      startRecorder(this, cx);
       await this.reload(cx);
       this.watch(cx);
       await autoGenerate(this, cx, this.turn); // the turn the tab shows: this terminal's newest, else the newest
     });
     cx.timer.every(1000, (cx) => this.tick(cx));
-    // Commands for keys.json: walkthrough.generate, .cancel, .next, .prev, .copy, .unread, .task (write your own).
+    // A newer release, at most once a day (lib/update.js); not under `herdr-app check`, which runs nothing.
+    this.update = updater({ shared, setShared, fetch: (url, options) => fetch(url, options), wait: (ms) => new Promise((done) => cx.timer.after(ms, () => done())) });
+    if (!checking()) cx.spawn(async (cx) => { await this.update.check(); cx.notify(); });
+    // Commands for keys.json: walkthrough.generate, .cancel, .next, .prev, .copy, .unread, .task, .recap (write your own).
     cx.spawn(async (cx) => {
       for (;;) {
         const name = String(await nextCommand()).replace(/^walkthrough\./, "").split(":")[0];
@@ -185,6 +221,7 @@ export class Walkthrough {
         else if (name === "next") this.move(1);
         else if (name === "prev") this.move(-1);
         else if (name === "copy") await this.copy(cx);
+        else if (name === "recap" && this.view) this.go(0);
         else if (name === "unread") this.unreadOnly = !this.unreadOnly;
         else if (name === "task") this.chooseTask("own", cx);
         cx.notify();
@@ -252,8 +289,8 @@ export class Walkthrough {
 
   /**
    * What people typed into agents in this repository since `since`: Claude
-   * Code's transcripts, else the turns the hooks recorded. A save re-reads the
-   * diff, so the transcripts are read at most every few seconds.
+   * Code's transcripts and pi, codex and opencode sessions, else the turns
+   * recorded. A save re-reads the diff, so the transcripts are read at most every few seconds.
    */
   async promptsSince(since) {
     const m = this.promptMemo;
@@ -262,11 +299,6 @@ export class Walkthrough {
     if (!list.length) list = this.turns.filter((t) => t.started >= since).map((t) => ({ at: t.started, text: t.prompt })).sort((a, b) => a.at - b.at);
     this.promptMemo = { since, at: Date.now(), list };
     return list;
-  }
-
-  /** The first page: the task's, when the shown walkthrough was matched against one. */
-  firstPage() {
-    return this.taskView ? -1 : 0;
   }
 
   /** Re-reads the diff and what to show for it. A newer reload wins over an older one still running. */
@@ -311,15 +343,20 @@ export class Walkthrough {
         // With nothing changed there is nothing to walk through: the last walkthrough shown here isn't offered (nor its footer, nor Copy).
         this.view = shown && diff.files.length ? overlay(shown.entry.walkthrough, diff.files) : null;
         this.taskView = this.view ? overlayAsks(shown.entry.walkthrough.asks, this.view) : null;
-        // Another walkthrough is another reading path: it opens on its first step not yet read,
-        // or on its task while none of it is read.
+        // Another report is another reading path; persistent hunk marks survive it.
         if (before !== shown?.entry?.key + String(shown?.entry?.generatedAt)) {
-          const first = this.view?.steps.findIndex((st) => !isRead(st, this.read)) ?? -1;
-          this.step = this.taskView && !this.view.steps.some((st) => isRead(st, this.read)) ? -1 : Math.max(0, first);
-          this.openFiles = new Set();
+          this.step = this.openingPage();
+          this.diagramZoom = 1;
+          this.diagramSource = false;
+          this.diagramSelected = null;
+          this.navigationFile = null;
+          this.visitedPages = new Set(["recap"]);
           this.showTaskText = false;
+          this.openFiles = new Set();
+          this.openContracts = new Set();
+          this.openContractChanges = new Set();
         }
-        if (this.view) this.step = Math.max(this.firstPage(), Math.min(this.step, this.view.steps.length));
+        if (this.view) this.step = Math.min(this.step, this.pages().length - 1);
       }
       this.error = null;
     } catch (e) {
@@ -348,7 +385,12 @@ export class Walkthrough {
       for (;;) {
         const changed = await watchFolder(folder);
         // A commit, a pull request or a finished turn doesn't change with the working tree.
-        if (this.scope !== "commit" && this.scope !== "pr" && !(this.scope === "turn" && !(this.turn && isOpen(this.turn))) && !this.dirty && await matters(top, changed, gitDir)) this.dirty = true;
+        const wanted = this.scope !== "commit" && this.scope !== "pr" && !(this.scope === "turn" && !(this.turn && isOpen(this.turn))) && !this.dirty;
+        // The recorder ends a turn once the working tree has been still a while, whatever is shown.
+        if ((wanted || this.record) && await matters(top, changed, gitDir)) {
+          this.treeChangedAt = Date.now();
+          if (wanted) this.dirty = true;
+        }
       }
     });
     loop(top);
@@ -382,7 +424,7 @@ export class Walkthrough {
           this.job.pid = job.pid;
           this.deadSince = null;
         } else if (!this.deadSince) {
-          // claude has just exited and run.sh is about to write its code: give it a moment.
+          // The run has just exited and run.sh is about to write its code: give it a moment.
           this.deadSince = Date.now();
         } else if (Date.now() - this.deadSince > 3000) {
           this.deadSince = null;
@@ -473,7 +515,7 @@ export class Walkthrough {
       const before = (this.shown?.entry.walkthrough.parts ?? []).flatMap((p) => p.steps.flatMap((st) => st.hunkIds));
       this.setJob(await startJob(repo, diff, { key, model, language, prompt, source, before, task }));
     } catch (err) {
-      this.genError = `Couldn't start claude: ${String(err?.message ?? err)}`;
+      this.genError = `Couldn't start ${backendOf(this.backend).program}: ${String(err?.message ?? err)}`;
     }
   }
 
@@ -485,26 +527,125 @@ export class Walkthrough {
     cx.notify();
   }
 
-  /** -1 is the task's page (when there is one), steps.length Not covered. */
+  /** Where a report opens: Recap while none of it is read yet, else where the reader left off, its first step not read. */
+  openingPage() {
+    if (!this.view?.steps.some((st) => isRead(st, this.read))) return 0;
+    return Math.max(0, this.pages().findIndex((p) => p.kind === "step" && !isRead(p.step, this.read)));
+  }
+
+  /** Contract labels are in the report's language, not the picker's: switching it doesn't rewrite a report already written. */
+  contractLanguage() { return this.shown?.entry?.language ?? "en"; }
+
+  /**
+   * The report's pages in reading order. Built once per report, view, language
+   * and task, not on every call: a render asks for it once per contents row.
+   */
+  pages() { return this.pageList().pages; }
+
+  pageList() {
+    const walkthrough = this.shown?.entry?.walkthrough, view = this.view, language = this.contractLanguage(), task = Boolean(this.taskView);
+    const m = this.pagesMemo;
+    if (m && m.walkthrough === walkthrough && m.view === view && m.language === language && m.task === task) return m;
+    const pages = reportPages(walkthrough, view, language, { task });
+    const index = new Map();
+    pages.forEach((p, i) => { const key = p.kind === "step" ? `step:${p.step.id}` : p.kind; if (!index.has(key)) index.set(key, i); });
+    return (this.pagesMemo = { walkthrough, view, language, task, pages, index });
+  }
+
+  pageIndex(kind, stepId = null) {
+    return this.pageList().index.get(kind === "step" && stepId ? `step:${stepId}` : kind) ?? -1;
+  }
+
   go(index) {
-    const steps = this.view?.steps ?? [];
-    this.step = Math.max(this.firstPage(), Math.min(steps.length, index));
+    const pages = this.pages();
+    this.step = Math.max(0, Math.min(Math.max(0, pages.length - 1), index));
+    const page = pages[this.step];
+    if (page?.kind === "recap") this.visitedPages.add("recap");
+    else if (page?.kind === "task") this.visitedPages.add("task");
+    else if (page?.kind === "contract") this.visitedPages.add(`contract-${page.contract.kind}`);
     this.target = null;
+    this.navigationFile = null;
+  }
+
+  blueprintTargets(path) {
+    const w = this.shown?.entry?.walkthrough;
+    const component = w?.recap?.architecture?.components?.find((c) => c.id === this.diagramSelected);
+    return blueprintFileTargets(w, this.view, this.diff?.files ?? [], component, path, this.contractLanguage());
+  }
+
+  goToBlueprintFile(path, cx) {
+    const destination = this.blueprintTargets(path)[0];
+    if (!destination) return;
+    this.go(destination.index);
+    this.navigationFile = path;
+    if (destination.kind === "tail") {
+      for (const u of this.view.uncovered) if (u.file.path === path) this.openFiles.add(`${u.file.scope}:${path}`);
+    } else if (destination.kind === "contract") {
+      this.openContracts.add(this.pages()[destination.index].contract.kind);
+    }
+    cx.notify();
+  }
+
+  toggleContractChange(kind, index, cx) {
+    const key = `${kind}:${index}`;
+    this.openContractChanges.has(key) ? this.openContractChanges.delete(key) : this.openContractChanges.add(key);
+    cx.notify();
+  }
+
+  goToContractStep(kind, changeIndex, destinationIndex, cx) {
+    const page = this.pages()[this.step];
+    if (page?.kind !== "contract" || page.contract.kind !== kind) return;
+    const change = page.contract.changes[changeIndex];
+    const target = contractChangeTargets(this.pages(), change).find((t) => t.index === destinationIndex);
+    if (!target) return;
+    this.go(target.index);
+    cx.notify();
+  }
+
+  /** The width a report page's content has: the panel less the contents column (when shown) and the page's padding. */
+  contentWidth() {
+    const width = this.width ?? 1000;
+    return Math.max(260, width - (width >= 720 ? 248 : 0) - 2 * PAGE_PADDING);
+  }
+
+  reportPage(t) {
+    const page = this.pages()[this.step];
+    if (page?.kind === "contract") {
+      const contract = page.contract;
+      const { found, missing } = contractChangeEvidence({ hunkIds: contract.changes.flatMap((c) => c.hunkIds) }, this.diff.files);
+      const changeEvidence = contract.changes.map((change) => ({
+        ...contractChangeEvidence(change, this.diff.files), targets: contractChangeTargets(this.pages(), change),
+      }));
+      return contractPage(contract, t, {
+        changeEvidence,
+        openChanges: new Set(contract.changes.flatMap((_c, i) => this.openContractChanges?.has(`${contract.kind}:${i}`) ? [i] : [])),
+        onToggleChange: (i, cx) => this.toggleContractChange(contract.kind, i, cx),
+        renderChangeSource: (i) => changeEvidence[i].found.length ? this.code(t, changeEvidence[i].found) : null,
+        onGoToStep: (i, index, cx) => this.goToContractStep(contract.kind, i, index, cx),
+        language: this.contractLanguage(),
+        width: this.contentWidth(),
+        sourceOpen: this.openContracts.has(contract.kind),
+        onToggleSource: (cx) => { this.openContracts.has(contract.kind) ? this.openContracts.delete(contract.kind) : this.openContracts.add(contract.kind); cx.notify(); },
+        source: this.openContracts.has(contract.kind) ? this.code(t, found) : null,
+        missing,
+      });
+    }
+    return page?.kind === "recap" ? this.recap(t) : page?.kind === "task" ? this.taskPage(t) : page?.kind === "step" ? this.page(t, page.step) : this.tail(t);
   }
 
   /**
    * One step on or back. Moving on from a step marks it read; with unread only
    * on, read steps are passed over (on past the last is Not covered, back
-   * before the first is the task's page, or stays put).
+   * through the task/contracts to Recap).
    */
   move(dir) {
-    const steps = this.view?.steps ?? [];
-    const here = steps[this.step];
+    const pages = this.pages();
+    const here = pages[this.step]?.kind === "step" ? pages[this.step].step : null;
     // Only the code still there: an outdated step's missing hunks were never on screen.
     if (dir > 0 && here) this.setRead({ hunkIds: here.found.map((f) => f.hunk.id) }, true);
     let i = this.step + dir;
-    if (this.unreadOnly) while (i >= 0 && i < steps.length && isRead(steps[i], this.read)) i += dir;
-    if (i >= this.firstPage()) this.go(i);
+    if (this.unreadOnly) while (pages[i]?.kind === "step" && isRead(pages[i].step, this.read)) i += dir;
+    if (i >= 0) this.go(i);
   }
 
   /** Marks a step's hunks (or any `{ hunkIds }`) read or unread, to be written on the next tick. */
@@ -515,7 +656,8 @@ export class Walkthrough {
 
   /** x: the shown step read or unread again. An outdated step can't be read until it is regenerated. */
   toggleRead() {
-    const s = this.view?.steps[this.step];
+    const page = this.pages()[this.step];
+    const s = page?.kind === "step" ? page.step : null;
     if (!s || s.outdated) return;
     this.setRead(s, !isRead(s, this.read));
   }
@@ -599,8 +741,9 @@ export class Walkthrough {
   /** The task picker's face. */
   taskFace() {
     const mode = this.taskChoiceFor(this.diff?.sk).mode;
-    if (mode === "off") return "nothing (off)";
-    if (!this.task) return "nothing found";
+    // The toolbar shows it without a label beside it, so each face says it is about the task.
+    if (mode === "off") return "No task (off)";
+    if (!this.task) return "No task found";
     return `◎ ${this.task.short}`;
   }
 
@@ -608,6 +751,20 @@ export class Walkthrough {
     this.picking = null;
     if (kind === "task") { this.chooseTask(value, cx); return; }
     if (kind === "auto") { this.auto = value; savePrefs({ autoGenerate: value }); cx.notify(); return; }
+    if (kind === "record") {
+      this.record = value;
+      savePrefs({ recordTurns: value });
+      if (!value) cx.spawn(async () => stopRecorder(this));
+      cx.notify();
+      return;
+    }
+    if (kind === "backend") {
+      this.backend = value;
+      this.model = modelFor(value, this.model);
+      this.cli = undefined;
+      savePrefs({ backend: value, model: this.model });
+      cx.spawn(async (cx) => { this.cli = await backendVersion(value); cx.notify(); });
+    }
     if (kind !== "agent") { this.genError = null; this.loading = true; }
     if (kind === "model") { this.model = value; savePrefs({ model: value }); }
     if (kind === "language") { this.language = value; savePrefs({ language: value }); }
@@ -733,7 +890,8 @@ export class Walkthrough {
     else if (this.view && (k === "left" || k === "k" || k === "p")) this.move(-1);
     else if (this.view && k === "x") this.toggleRead();
     else if (this.view && k === "u") this.unreadOnly = !this.unreadOnly;
-    else if (this.taskView && k === "t") this.go(-1);
+    else if (this.taskView && k === "t") this.go(this.pageIndex("task"));
+    else if (this.view && k === "r") this.go(0);
     else return;
     cx.notify();
   }
@@ -747,6 +905,7 @@ export class Walkthrough {
       .on_size_change((size, cx) => { if (Math.abs((this.width ?? 0) - size.width) > 1) { this.width = size.width; cx.notify(); } })
       .size_full().bg(inDialog ? t.popover : t.background).text_color(t.foreground).text_size(13)
       .child(this.header(t, inDialog))
+      .when(Boolean(this.update?.available()), (el) => el.child(this.updateStrip(t, this.update.available())))
       .child(this.toolbar(t))
       .when(this.editingTask, (el) => el.child(this.taskEditor(t)))
       .child(div().flex_1().min_h(0).relative()
@@ -759,60 +918,93 @@ export class Walkthrough {
       .when(Boolean(this.view), (el) => el.child(this.footer(t)));
   }
 
+  /** The title row: the mod, which repository and branch, the one action, and Esc in a dialog. */
   header(t, inDialog) {
     const r = this.repo;
-    return h_flex().h(40).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
-      .child(div().text_size(12).text_color(t.accent).child("◆"))
-      .child(div().font_semibold().text_size(13.5).child("Walkthrough"))
-      .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.dim)
-        .child(r ? `${r.name}${r.branch ? `   ⎇ ${r.branch}` : "   (detached)"}` : this.folder ?? ""))
+    const busy = Boolean(this.job);
+    const action = busy
+      ? button(t, "cancel", "Cancel", (_e, cx) => cx.spawn(async (cx) => this.cancel(cx)), { small: true })
+      : button(t, "generate", this.shown?.exact ? "Regenerate" : "✦ Generate", (_e, cx) => cx.spawn(async (cx) => this.generate(cx)),
+        { kind: this.shown?.exact ? "outline" : "solid", small: true, disabled: !this.canGenerate(), tooltip: this.cli === null ? `${backendOf(this.backend).program} isn't installed` : null });
+    return h_flex().h(48).flex_none().px(14).gap(10).items_center().border_b(1).border_color(t.border)
+      .child(logo(t))
+      .child(div().flex_none().font_semibold().text_size(14).child("Walkthrough"))
+      .when(Boolean(r || this.folder), (el) => el.child(h_flex().min_w(0).flex_shrink(1).h(22).px(8).gap(6).items_center().rounded_full().bg(t.raised).text_size(11.5).text_color(t.muted)
+        .child(div().min_w(0).truncate().child(r ? r.name : this.folder))
+        .when(Boolean(r), (e) => e.child(div().flex_none().text_color(t.dim).child("⎇")).child(div().min_w(0).truncate().child(r.branch || "detached")))))
+      .child(div().flex_1())
+      .when(this.loading, (el) => el.child(div().text_size(11).text_color(t.dim).frames(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"], 90)))
+      .child(action)
       .when(inDialog, (el) => el.child(button(t, "close", "Esc", () => closeOverlay(props().overlay), { kind: "ghost", small: true })));
   }
 
+  /**
+   * A newer release, when there is one: the prompt to hand the agent, since an
+   * added mod can't update itself (see lib/update.js).
+   */
+  updateStrip(t, latest) {
+    const link = (id, label, onClick, color = t.muted) => div().id(id).flex_none().text_size(11.5).text_color(color).cursor_pointer()
+      .hover((s) => s.text_color(t.foreground)).on_click(onClick).child(label);
+    return h_flex().id("update-strip").flex_none().mx(14).mt(10).px(12).py(8).gap(10).items_center().flex_wrap().rounded(10)
+      .border_1().border_color(t.accent + "40").bg(t.accent + "12")
+      .child(div().flex_none().size(20).rounded_full().bg(t.accent + "29").flex().items_center().justify_center().text_size(11).text_color(t.accent).child("↑"))
+      .child(div().flex_none().text_size(12.5).font_semibold().child(`Walkthrough ${latest.tag} is out`))
+      .child(div().flex_none().text_size(11.5).text_color(t.dim).child(`you have ${VERSION}`))
+      .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.muted).child("Paste the prompt to your agent to update."))
+      .child(button(t, "update-copy", "Copy prompt", (_e, cx) => {
+        cx.write_to_clipboard(PROMPT);
+        notify({ title: "Copied", body: PROMPT, level: "success", timeout: 2500 });
+      }, { kind: "solid", small: true, tooltip: PROMPT }))
+      .child(link("update-notes", "What changed", (_e, cx) => cx.open_url(latest.url ?? RELEASES), t.accent))
+      .child(link("update-later", "Later", (_e, cx) => { this.update.dismiss(latest.tag); cx.notify(); }))
+      .child(link("update-stop", "Stop checking", (_e, cx) => { this.update.stop(); cx.notify(); }));
+  }
+
+  /** What to read (the scope, and which one of it) on the left; how it is written on the right. Wraps when narrow. */
   toolbar(t) {
-    const busy = Boolean(this.job);
-    const tabs = h_flex().flex_none().p(2).gap(2).rounded(7).bg(t.raised).children(SCOPES.map((s) =>
-      div().id(`scope-${s.key}`).px(9).h(22).flex().items_center().rounded(5).text_size(12).cursor_pointer()
-        .when(this.scope === s.key, (e) => e.bg(t.popover).text_color(t.foreground).font_semibold())
+    const tabs = h_flex().flex_none().p(3).gap(2).rounded(9).bg(t.raised).children(SCOPES.map((s) =>
+      div().id(`scope-${s.key}`).px(10).h(24).flex().items_center().rounded(6).text_size(12).cursor_pointer()
+        .when(this.scope === s.key, (e) => e.bg(t.popover).text_color(t.foreground).font_semibold().shadow_xs())
         .when(this.scope !== s.key, (e) => e.text_color(t.muted).hover((st) => st.text_color(t.foreground)))
         .tooltip(s.about)
         .on_click((_e, cx) => this.pickScope(s.key, cx))
         .child(s.label)));
     const open = (what) => (_e, cx) => { this.togglePicker(what); cx.notify(); };
-    const action = busy
-      ? button(t, "cancel", "Cancel", (_e, cx) => cx.spawn(async (cx) => this.cancel(cx)), { small: true })
-      : button(t, "generate", this.shown?.exact ? "Regenerate" : "Generate", (_e, cx) => cx.spawn(async (cx) => this.generate(cx)),
-        { kind: this.shown?.exact ? "outline" : "solid", small: true, disabled: !this.canGenerate(), tooltip: this.claude === null ? "claude isn't installed" : null });
-    // Above: what to read, and the one action. Below: which one of it (left), and how it is written (right).
-    const top = h_flex().min_h(42).flex_none().px(14).py(7).gap(8).items_center().flex_wrap().border_b(1).border_color(t.border)
-      .child(tabs)
-      .child(div().flex_1())
-      .when(this.loading, (el) => el.child(div().text_size(11).text_color(t.dim).frames(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"], 90)))
-      .child(action);
     const label = (text) => div().flex_none().text_size(11).text_color(t.dim).child(text);
     const auto = this.auto !== "off";
-    const which = h_flex().flex_1().min_w(0).gap(8).items_center()
+    const narrow = (this.width ?? 1000) < 1100;
+    const which = h_flex().min_w(0).gap(8).items_center().flex_wrap()
+      .child(tabs)
       .when(this.scope === "branch", (el) => el.child(label("vs")).child(picker(t, "pick-base", this.base ?? "Pick a base", open("base"))))
       .when(this.scope === "commit", (el) => el.child(picker(t, "pick-commit", this.commit ? `${this.commit.short} ${this.commit.subject}` : "Pick a commit", open("commit"))))
       .when(this.scope === "pr" && Boolean(this.prs?.length), (el) => el.child(picker(t, "pick-pr", this.pr ? `#${this.pr.number} ${this.pr.title}` : "Pick a pull request", open("pr"))))
-      .when(this.scope === "turn" && this.turns.length > 0, (el) => el.child(label("Turn")).child(picker(t, "pick-turn", turnLabel(this), open("turn")))
-        .child(button(t, "toggle-auto", auto ? "⚡ Auto: on" : "Auto: off", (_e, cx) => { this.choose("auto", auto ? "off" : DEFAULT_AUTO, cx); }, {
-          kind: "ghost", small: true,
+      .when(this.scope === "turn" && this.turns.length > 0, (el) => el.child(picker(t, "pick-turn", turnLabel(this), open("turn")))
+        .child(button(t, "toggle-auto", auto ? "⚡ Auto" : "Auto: off", (_e, cx) => { this.choose("auto", auto ? "off" : DEFAULT_AUTO, cx); }, {
+          kind: auto ? "soft" : "ghost", small: true,
           tooltip: auto ? `${autoOf(this.auto).about}. Click to turn it off.` : "Only when you press Generate. Click to write the last turn's walkthrough without a click.",
+        }))
+        .child(button(t, "toggle-record", this.record ? "● Recording" : "Record: off", (_e, cx) => this.choose("record", !this.record, cx), {
+          kind: this.record ? "soft" : "ghost", small: true,
+          tooltip: this.record
+            ? "Recording the turns of pi, codex and opencode in this repository while the walkthrough is open (Claude Code's are left to its hooks). Click to stop."
+            : "For agents with no hooks (pi, codex, opencode): record their turns while the walkthrough is open. Click to start.",
         })));
-    const how = h_flex().flex_none().gap(8).items_center()
-      .when(Boolean(this.diff), (el) => el.child(label("Matched against")).child(picker(t, "pick-task", this.taskFace(), open("task"),
-        { tooltip: this.task ? `Matched against ${this.task.label.charAt(0).toLowerCase()}${this.task.label.slice(1)}` : "What the change is matched against" })))
-      .child(h_flex().flex_none().items_center().rounded(6).border_1().border_color(t.border)
+    const how = h_flex().flex_none().gap(8).items_center().flex_wrap()
+      .when(Boolean(this.diff), (el) => el.child(picker(t, "pick-task", this.taskFace(), open("task"),
+        { tooltip: this.task ? `Matched against ${this.task.label.charAt(0).toLowerCase()}${this.task.label.slice(1)}` : "What the change is matched against", kind: this.task ? "soft" : "outline" })))
+      .child(h_flex().flex_none().items_center().rounded(8).border_1().border_color(t.border)
+        .child(picker(t, "pick-backend", backendOf(this.backend).name, open("backend"), { tooltip: "Who writes the walkthrough", kind: "ghost" }))
+        .child(div().w(1).h(14).bg(t.border))
         .child(picker(t, "pick-model", modelOf(this.model).name, open("model"), { tooltip: "Model", kind: "ghost" }))
         .child(div().w(1).h(14).bg(t.border))
         .child(picker(t, "pick-language", languageOf(this.language).name, open("language"), { tooltip: "Language of the explanations", kind: "ghost" })));
-    const below = h_flex().min_h(36).flex_none().px(14).py(5).gap(8).items_center().border_b(1).border_color(t.border).child(which).child(how);
-    return v_flex().flex_none().child(top).child(below);
+    return (narrow ? v_flex().items_start() : h_flex().items_center()).id("toolbar-options").flex_none().px(14).py(8).gap(8).border_b(1).border_color(t.border)
+      .child(which.when(!narrow, (e) => e.flex_1()))
+      .child(how);
   }
 
   canGenerate() {
-    return Boolean(this.claude && this.repo && this.diff && this.diff.hunkCount > 0 && !this.job && !this.loading);
+    return Boolean(this.cli && this.repo && this.diff && this.diff.hunkCount > 0 && !this.job && !this.loading);
   }
 
   /** The open picker's rows and where it sits: { items, width, side }. */
@@ -832,7 +1024,8 @@ export class Walkthrough {
         };
         return { side: "right", width: 360, items: TASK_MODES.map((m) => ({ label: m.key === "own" ? "Your own…" : m.name, hint: hint(m), value: m.key, selected: m.key === choice.mode })) };
       }
-      case "model": return { side: "right", width: 280, items: MODELS.map((m) => ({ label: m.name, hint: m.about, value: m.key, selected: m.key === this.model })) };
+      case "backend": return { side: "right", width: 300, items: BACKENDS.map((b) => ({ label: b.name, hint: b.about, value: b.key, selected: b.key === this.backend })) };
+      case "model": return { side: "right", width: 280, items: modelsOf(this.backend).map((m) => ({ label: m.name, hint: m.about, value: m.key, selected: m.key === this.model })) };
       case "language": return { side: "right", width: 220, items: LANGUAGES.map((l) => ({ label: l.name, right: l.english === l.name ? "" : l.english, value: l.tag, selected: l.tag === this.language })) };
       case "agent": {
         const current = this.agent();
@@ -887,7 +1080,7 @@ export class Walkthrough {
       .when(Boolean(text), (e) => e.child(div().max_w(560).text_center().text_size(12.5).line_height(1.5).text_color(t.dim).child(text)))
       .when(actions.length > 0, (e) => e.child(h_flex().mt(8).gap(8).items_center().children(actions)));
     const goTo = (key, label) => button(t, `go-${key}`, label, (_e, cx) => this.pickScope(key, cx), { kind: "ghost", small: true });
-    if (this.remote) return center("This space is on another machine", "Walkthroughs read git and run claude on this computer only.", { icon: "⇄" });
+    if (this.remote) return center("This space is on another machine", "Walkthroughs read git and run the model on this computer only.", { icon: "⇄" });
     if (this.repo === undefined) return center("Reading…");
     if (this.repo === null) return center("Not a git repository", this.folder ? `Nothing to walk through in ${this.folder}.` : "Focus a terminal in a repository, then open the walkthrough again.", { icon: "⎇" });
     if (this.error) return center("Couldn't read the diff", this.error, { icon: "!", color: t.ansi1 });
@@ -919,7 +1112,7 @@ export class Walkthrough {
       .when((this.width ?? 1000) >= 720, (e) => e.child(this.contents(t)))
       .child(v_flex().flex_1().min_w(0).h_full()
         .children(this.banners(t))
-        .child(this.step < 0 ? this.taskPage(t) : this.step < this.view.steps.length ? this.page(t, this.view.steps[this.step]) : this.tail(t)));
+        .child(this.reportPage(t)));
   }
 
   /** The reader's own task, written under the toolbar. */
@@ -941,13 +1134,13 @@ export class Walkthrough {
    */
   taskPage(t) {
     const tv = this.taskView, e = this.shown.entry, task = e.task;
-    const toStep = (s, id) => div().id(id).flex_none().px(7).h(20).flex().items_center().rounded(5).border_1().border_color(t.border).bg(t.raised)
+    const toStep = (s, id) => div().id(id).flex_none().px(8).h(22).flex().items_center().rounded_full().border_1().border_color(t.border).bg(t.raised)
       .text_size(11.5).cursor_pointer().hover((st) => st.bg(t.hover)).tooltip(s.title)
-      .on_click((_e, cx) => { this.go(s.position - 1); cx.notify(); })
+      .on_click((_e, cx) => { this.go(this.pageIndex("step", s.id)); cx.notify(); })
       .child(`${s.position}. ${clip(s.title, 42)}`);
     const color = (c) => (c === "seen" ? t.ansi2 : c === "partly" ? t.ansi3 : t.dim);
-    const row = (a) => h_flex().w_full().max_w(820).gap(10).items_start().py(6).border_b(1).border_color(t.border)
-      .child(div().flex_none().w(16).pt(1).text_size(13).text_color(color(a.coverage)).tooltip(COVERAGE_ABOUT[a.coverage]).child(COVERAGE_MARK[a.coverage]))
+    const row = (a) => h_flex().id(`ask-${a.id}`).w_full().max_w(820).gap(12).items_start().p(12).rounded(12).border_1().border_color(t.border).bg(t.surface ?? t.raised)
+      .child(div().flex_none().size(24).rounded_full().bg(color(a.coverage) + "24").flex().items_center().justify_center().text_size(12).text_color(color(a.coverage)).tooltip(COVERAGE_ABOUT[a.coverage]).child(COVERAGE_MARK[a.coverage]))
       .child(v_flex().flex_1().min_w(0).gap(5)
         .child(div().text_size(13.5).line_height(1.5).when(a.coverage === "absent", (el) => el.text_color(t.muted)).child(a.text))
         .child(h_flex().gap(6).flex_wrap().items_center()
@@ -955,15 +1148,15 @@ export class Walkthrough {
           .when(a.coverage === "absent", (el) => el.child(div().text_size(11.5).text_color(t.dim).child("Not in this diff")))
           .children(a.steps.map((s) => toStep(s, `task-${a.id}-${s.id}`)))
           .when(a.tail > 0, (el) => el.child(div().id(`task-${a.id}-tail`).text_size(11.5).text_color(t.dim).cursor_pointer().hover((st) => st.text_color(t.foreground))
-            .on_click((_e, cx) => { this.go(this.view.steps.length); cx.notify(); })
+            .on_click((_e, cx) => { this.go(this.pageIndex("tail")); cx.notify(); })
             .child(a.steps.length ? `and ${a.tail} hunk${a.tail === 1 ? "" : "s"} under Not covered` : `${a.tail} hunk${a.tail === 1 ? "" : "s"} under Not covered`)))
           .when(a.outdated, (el) => el.child(chip(t, "Outdated", t.blocked, t.blocked + "14").tooltip("Code this request was tied to has changed or is gone")))));
     const text = task?.text ?? "";
-    return v_flex().id(`task-${e.generatedAt}`).flex_1().min_h(0).overflow_y_scrollbar().px(22).py(16).gap(10)
+    return pageFrame(`task-${e.generatedAt}`)
       .child(h_flex().gap(8).items_center()
-        .child(div().flex_1().min_w(0).truncate().text_size(10.5).font_semibold().text_color(t.dim).child(`TASK${task?.label ? `  ·  ${task.label.toUpperCase()}` : ""}`))
+        .child(eyebrow(t, `Task${task?.label ? `  ·  ${task.label}` : ""}`).flex_1())
         .when(Boolean(text), (el) => el.child(button(t, "task-text", this.showTaskText ? "Hide the task" : "Show the task", (_e, cx) => { this.showTaskText = !this.showTaskText; cx.notify(); }, { kind: "ghost", small: true }))))
-      .child(div().text_size(17).font_semibold().child("What the task asks for"))
+      .child(div().text_size(22).line_height(1.3).font_semibold().child("What the task asks for"))
       .child(div().max_w(820).text_size(12.5).line_height(1.5).text_color(t.muted).child("Each request in the task, and the steps that carry it out. It says where a request shows up in this diff, not whether it is done well; a request not in this diff may be done elsewhere."))
       // A walkthrough of the prompts stays shown as more are sent; it says so rather than going stale.
       .when(task?.from === "prompts" && this.task?.from === "prompts" && taskKey(task) !== taskKey(this.task), (el) => el.child(
@@ -972,7 +1165,7 @@ export class Walkthrough {
         .children(text.split("\n").slice(0, 200).map((l) => div().child(l || " ")))
         .when(Boolean(task?.context), (c) => c.child(div().pt(8).text_size(11).text_color(t.dim).child("Earlier prompts of the same session were given to make it clear.")))))
       .when(!tv.asks.length, (el) => el.child(this.notice(t, t.muted, "The task names nothing concrete to match against the change: no request in it would show up as a change to files.")))
-      .when(tv.asks.length > 0, (el) => el.child(v_flex().w_full().children(tv.asks.map(row))))
+      .when(tv.asks.length > 0, (el) => el.child(v_flex().w_full().gap(8).children(tv.asks.map(row))))
       .when(tv.outside.length > 0, (el) => el
         .child(div().pt(10).text_size(14).font_semibold().child("Not tied to any request"))
         .child(div().max_w(820).text_size(12.5).text_color(t.muted).child("Steps no request in the task points at: supporting work the model didn't tie to one, or work the task doesn't mention."))
@@ -988,8 +1181,8 @@ export class Walkthrough {
     const totals = d.files.map((f) => ({ f, added: f.hunks.reduce((n, h) => n + h.added, 0), deleted: f.hunks.reduce((n, h) => n + h.deleted, 0) }));
     return v_flex().id("intro").size_full().overflow_y_scrollbar().items_center().p(28).gap(14)
       .child(v_flex().w_full().max_w(620).gap(14)
-        .child(div().text_size(18).font_semibold().child("Read this change in the order it makes sense"))
-        .child(div().text_size(13).text_color(t.muted).child("Claude groups related edits into steps, orders them so each builds on the last, and explains what each one changes. It explains; it doesn't judge the code. Every edit it leaves out is still listed at the end."))
+        .child(div().text_size(24).line_height(1.25).font_semibold().child("Read this change in the order it makes sense"))
+        .child(div().text_size(13.5).line_height(1.6).text_color(t.muted).child(`${backendOf(this.backend).writer} groups related edits into steps, orders them so each builds on the last, and explains what each one changes. It explains; it doesn't judge the code. Every edit it leaves out is still listed at the end.`))
         .child(h_flex().gap(8).items_center().flex_wrap()
           .child(chip(t, `${d.fileCount} file${d.fileCount === 1 ? "" : "s"}`))
           .child(chip(t, `${d.hunkCount} hunk${d.hunkCount === 1 ? "" : "s"}`))
@@ -997,15 +1190,15 @@ export class Walkthrough {
           .when(d.generatedPaths.length > 0, (e) => e.child(chip(t, `${d.generatedPaths.length} generated, not sent`)))
           .when(d.unread.length > 0, (e) => e.child(chip(t, `${d.unread.length} not read`)))
           .when(Boolean(this.task), (e) => e.child(chip(t, `Task: ${this.task.short}`, t.accent).tooltip(`${this.task.label}: each request in it is matched to the steps that carry it out. The task menu changes or turns it off.`))))
-        .when(this.claude === null, (e) => e.child(this.notice(t, t.ansi1, "Claude Code's `claude` isn't installed, or isn't on the PATH Herdr starts programs with. Walkthroughs are written by `claude -p`.")))
+        .when(this.cli === null, (e) => e.child(this.notice(t, t.ansi1, `${backendOf(this.backend).name}'s \`${backendOf(this.backend).program}\` isn't installed, or isn't on the PATH Herdr starts programs with. Walkthroughs are written by \`${backendOf(this.backend).program} -p\`; the backend menu in the toolbar picks another.`)))
         .when(tooBig, (e) => e.child(this.notice(t, t.ansi1, "This diff is too large to send whole, and a walkthrough of part of it would read as complete. Pick a narrower scope.")))
         .when(d.hunkCount === 0 && d.files.length > 0, (e) => e.child(this.notice(t, t.muted, d.generatedPaths.length ? "Only generated files changed; they aren't sent to the model." : "No changed lines to read: binary files, renames or mode changes only.")))
         .when(Boolean(this.genError), (e) => e.child(this.notice(t, t.ansi1, this.genError)))
         .child(h_flex().gap(10).items_center()
           .child(button(t, "start", `Generate walkthrough with ${modelOf(this.model).name}`, (_e, cx) => cx.spawn(async (cx) => this.generate(cx)), { kind: "solid", disabled: !this.canGenerate() || tooBig }))
           .child(div().text_size(11.5).text_color(t.dim).child(`in ${languageOf(this.language).name}`)))
-        .child(v_flex().mt(6).rounded(8).border_1().border_color(t.border).children(totals.map(({ f, added, deleted }, i) =>
-          h_flex().h(26).px(10).gap(8).items_center().when(i > 0, (e) => e.border_t(1).border_color(t.border)).text_size(12)
+        .child(v_flex().mt(6).rounded(12).overflow_hidden().border_1().border_color(t.border).bg(t.surface ?? t.raised).children(totals.map(({ f, added, deleted }, i) =>
+          h_flex().h(32).px(12).gap(8).items_center().when(i > 0, (e) => e.border_t(1).border_color(t.border)).text_size(12)
             .child(div().flex_1().min_w(0).truncate().text_color(f.generated || f.unread ? t.dim : t.foreground).child(f.path))
             .when(f.generated, (e) => e.child(chip(t, "generated")))
             .when(Boolean(f.unread), (e) => e.child(div().text_size(11).text_color(t.dim).child(f.unread)))
@@ -1017,7 +1210,7 @@ export class Walkthrough {
   /** A message in a tinted box with a coloured edge; `t.muted` makes it a quiet, grey one. */
   notice(t, color, text) {
     const quiet = color === t.muted;
-    return div().w_full().pl(11).pr(10).py(7).rounded(7).border_l(3).border_color(quiet ? t.border : color).bg(quiet ? t.raised : color + "14")
+    return div().w_full().px(12).py(8).rounded(10).border_1().border_color(quiet ? t.border : color + "40").bg(quiet ? t.raised : color + "12")
       .text_size(12).line_height(1.5).text_color(quiet ? t.muted : t.foreground).child(text);
   }
 
@@ -1031,7 +1224,7 @@ export class Walkthrough {
     return v_flex().size_full().items_center().justify_center().gap(12)
       .child(v_flex().gap(10)
         .child(row("done", "Read the diff", `${j.hunkCount} hunk${j.hunkCount === 1 ? "" : "s"}`))
-        .child(row(this.job.done ? "done" : "run", `Asking Claude ${modelOf(j.model).name}`, formatElapsed(Date.now() - j.started)))
+        .child(row(this.job.done ? "done" : "run", modelOf(j.model).backend === "pi" ? `Asking pi (${modelOf(j.model).name})` : `Asking Claude ${modelOf(j.model).name}`, formatElapsed(Date.now() - j.started)))
         .child(row(this.job.done ? "run" : "wait", "Putting the steps together")))
       .child(div().mt(8).max_w(480).text_center().text_size(11.5).text_color(t.dim).child("It runs in the background: close this and come back, the walkthrough will be waiting."))
       .child(button(t, "cancel-run", "Cancel", (_e, cx) => cx.spawn(async (cx) => this.cancel(cx)), { small: true }));
@@ -1041,9 +1234,9 @@ export class Walkthrough {
     const out = [];
     // One shape for every banner: a coloured edge and tint, an icon, what happened, then (dimmer) the detail.
     // `color` null: a quiet, grey one.
-    const bar = (id, color, icon, text, action, detail = "") => h_flex().id(id).flex_none().mx(16).mt(10).pl(10).pr(8).py(6).gap(10).items_center().rounded(8)
-      .border_l(3).border_color(color ?? t.border).bg(color ? color + "14" : t.raised)
-      .child(div().flex_none().size(18).rounded(9).flex().items_center().justify_center().text_size(10.5).font_semibold()
+    const bar = (id, color, icon, text, action, detail = "") => h_flex().id(id).flex_none().mx(20).mt(12).pl(10).pr(8).py(7).gap(10).items_center().rounded(10)
+      .border_1().border_color(color ? color + "40" : t.border).bg(color ? color + "12" : t.raised)
+      .child(div().flex_none().size(20).rounded_full().flex().items_center().justify_center().text_size(10.5).font_semibold()
         .bg(color ? color + "29" : t.hover).text_color(color ?? t.muted).child(icon))
       .child(div().flex_1().min_w(0).text_size(12).line_height(1.5)
         .child(text).when(Boolean(detail), (e) => e.child(div().text_size(11.5).text_color(t.muted).child(detail))))
@@ -1060,7 +1253,7 @@ export class Walkthrough {
       out.push(bar("b-changed", t.accent, "↻", `${n === 1 ? "1 step" : `${n} steps`} changed since you last read ${n === 1 ? "it" : "them"}.`,
         button(t, "b-changed-go", "Go →", (_e, cx) => {
           // Each press goes on to the next one, then round to the first.
-          this.go((changed.find((st) => st.position - 1 > this.step) ?? changed[0]).position - 1);
+          this.go(this.pageIndex("step", (changed.find((st) => this.pageIndex("step", st.id) > this.step) ?? changed[0]).id));
           cx.notify();
         }, { small: true })));
     }
@@ -1091,71 +1284,74 @@ export class Walkthrough {
   contents(t) {
     const v = this.view, w = this.shown.entry.walkthrough;
     const uncovered = v.uncovered.length;
+    const pages = this.pages(), tailIndex = pages.length - 1;
+    // Part titles are the model's, contract labels translated: both upper-cased in the report's language.
+    const lang = this.contractLanguage();
+    const groupTitle = (title, right = null, locale = "en") => eyebrow(t, title, right, locale).px(8).pt(14).pb(4);
     const fresh = v.uncovered.reduce((n, u) => n + u.hunks.filter((h) => !hunkRead(h.id, this.read)).length, 0);
     const changed = new Set(this.changedSteps().map((s) => s.id));
     // The step on screen stays listed, read or not, so the list never loses its place.
-    const listed = (s) => !this.unreadOnly || s.position - 1 === this.step || !isRead(s, this.read);
+    const listed = (s) => !this.unreadOnly || this.pageIndex("step", s.id) === this.step || !isRead(s, this.read);
     const parts = v.parts.map((part) => ({ part, steps: part.steps.filter(listed) })).filter((p) => p.steps.length);
-    const stepRow = (s, i) => h_flex().id(`toc-${s.id}`).w_full().pl(6).pr(8).py(5).gap(8).items_center().rounded(6).cursor_pointer()
-      .border_l(2).border_color(i === this.step ? t.accent : "#00000000")
+    // One row shape for every page: a round badge (its number, ✓ once read, ! when outdated), its title, then any tag.
+    const row = (id, i) => h_flex().id(id).w_full().px(8).h(32).gap(9).items_center().rounded(8).cursor_pointer()
       .when(i === this.step, (e) => e.bg(t.accent + "1f"))
       .when(i !== this.step, (e) => e.hover((st) => st.bg(t.hover)))
-      .on_click((_e, cx) => { this.go(i); cx.notify(); })
-      .child(div().flex_none().size(18).rounded(5).flex().items_center().justify_center().text_size(10).font_semibold()
+      .on_click((_e, cx) => { this.go(i); cx.notify(); });
+    const badge = () => div().flex_none().size(20).rounded_full().flex().items_center().justify_center().text_size(10).font_semibold();
+    const stepRow = (s, i, read = s.hunkIds ? isRead(s, this.read) : this.visitedPages.has(s.id)) => row(`toc-${s.id}`, i)
+      .child(badge().when(i === this.step && !s.outdated, (e) => e.bg(t.accent).text_color(t.solid_foreground ?? "#ffffff"))
         .when(s.outdated, (e) => e.bg(t.blocked + "29").text_color(t.blocked).child("!"))
-        .when(!s.outdated && isRead(s, this.read) && i !== this.step, (e) => e.bg(t.raised).text_color(t.ansi2).child("✓"))
-        .when(!s.outdated && (!isRead(s, this.read) || i === this.step), (e) => e.bg(changed.has(s.id) ? t.accent + "29" : t.raised)
-          .text_color(changed.has(s.id) ? t.accent : t.muted).child(String(s.position))))
+        .when(!s.outdated && read && i !== this.step, (e) => e.bg(t.ansi2 + "24").text_color(t.ansi2).child("✓"))
+        .when(!s.outdated && (!read || i === this.step), (e) => e.when(i !== this.step, (x) => x.bg(changed.has(s.id) ? t.accent + "29" : t.raised)
+          .text_color(changed.has(s.id) ? t.accent : t.muted)).child(String(s.position))))
       .when(changed.has(s.id), (e) => e.tooltip("Changed since you last read it"))
       // A step read and left behind fades; one to skim is quieter than one to read.
       .child(div().flex_1().min_w(0).truncate().text_size(12.5)
-        .when(isRead(s, this.read) && i !== this.step, (e) => e.text_color(t.dim))
-        .when(!(isRead(s, this.read) && i !== this.step) && s.weight === "skim", (e) => e.text_color(t.muted)).child(s.title))
-      .when(s.weight === "key", (e) => e.child(div().flex_none().px(4).h(15).flex().items_center().rounded(4).border_1().border_color(t.accent + "55")
-        .text_size(9.5).font_semibold().text_color(t.accent).tooltip("Key change: the rest depends on it").child("KEY")));
+        .when(i === this.step, (e) => e.font_medium())
+        .when(read && i !== this.step, (e) => e.text_color(t.dim))
+        .when(!(read && i !== this.step) && s.weight === "skim", (e) => e.text_color(t.muted)).child(s.title))
+      .when(s.weight === "key", (e) => e.child(tag(t, "KEY", t.accent, t.accent + "24", 9.5).tooltip("Key change: the rest depends on it")));
     const total = v.steps.length, done = v.steps.filter((s) => isRead(s, this.read)).length;
     // The summary is cut to its first few lines until asked for; the steps stay in view.
     const long = (w.summary ?? "").length > SUMMARY_CHARS;
-    return v_flex().id("contents").w(248).flex_none().h_full().overflow_y_scrollbar().border_r(1).border_color(t.border).p(10).gap(2)
-      .child(div().px(8).pt(2).text_size(13.5).font_semibold().child(w.title))
-      .when(Boolean(w.summary), (e) => e.child(div().px(8).pt(4).text_size(12).line_height(1.5).text_color(t.muted)
+    return v_flex().id("contents").w(248).flex_none().h_full().overflow_y_scrollbar().border_r(1).border_color(t.border).bg(t.surface ?? t.popover).px(10).py(14).gap(2)
+      .child(div().px(8).text_size(14.5).line_height(1.35).font_semibold().child(w.title))
+      .when(Boolean(w.summary), (e) => e.child(div().px(8).pt(6).text_size(12).line_height(1.55).text_color(t.muted)
         .child(long && !this.summaryOpen ? clip(w.summary, SUMMARY_CHARS) : w.summary)))
       .when(long, (e) => e.child(div().id("summary-more").px(8).pt(2).text_size(11.5).text_color(t.accent).cursor_pointer()
         .on_click((_e, cx) => { this.summaryOpen = !this.summaryOpen; cx.notify(); }).child(this.summaryOpen ? "Show less" : "Show more")))
-      .child(div().mt(10).mx(8).h(3).rounded(2).bg(t.raised).child(div().h_full().rounded(2).bg(t.ansi2).w(Math.round(212 * (total ? done / total : 0)))))
-      .child(div().px(8).pt(4).text_size(11).text_color(t.dim).child(`${done} of ${total} read`))
+      .child(h_flex().mt(12).mx(8).gap(8).items_center()
+        .child(meter(t, 104, total ? done / total : 0, done === total && total ? t.ansi2 : t.accent))
+        .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(`${done} of ${total} read`)))
       .when(this.unreadOnly, (e) => e.child(h_flex().px(8).pt(8).gap(6).items_center().text_size(11).text_color(t.accent)
         .child(div().child("Unread only")).child(div().text_color(t.dim).child("· u shows all"))))
+      .child(groupTitle("Overview"))
+      .child(stepRow({ id: "recap", title: recapStrings(this.contractLanguage()).recap, position: "≡" }, 0))
       .when(Boolean(this.taskView), (e) => {
         const tv = this.taskView;
-        return e.child(h_flex().id("toc-task").mt(8).w_full().pl(6).pr(8).py(5).gap(8).items_center().rounded(6).cursor_pointer()
-          .border_l(2).border_color(this.step === -1 ? t.accent : "#00000000")
-          .when(this.step === -1, (el) => el.bg(t.accent + "1f"))
-          .when(this.step !== -1, (el) => el.hover((st) => st.bg(t.hover)))
-          .on_click((_e, cx) => { this.go(-1); cx.notify(); })
+        return e.child(row("toc-task", this.pageIndex("task"))
           .tooltip(tv.total ? `${tv.met} of ${tv.total} request${tv.total === 1 ? "" : "s"} show up in this diff (t)` : "The task names nothing concrete (t)")
-          .child(div().flex_none().size(18).rounded(5).flex().items_center().justify_center().bg(t.raised).text_size(10).text_color(t.accent).child("◎"))
+          .child(badge().bg(t.accent + "24").text_color(t.accent).child("◎"))
           .child(div().flex_1().text_size(12.5).child("Task"))
-          .child(div().text_size(11).text_color(tv.met < tv.total ? t.ansi3 : t.dim).child(tv.total ? `${tv.met} / ${tv.total}` : "—")));
+          .child(tv.met < tv.total ? tag(t, `${tv.met} / ${tv.total}`, t.ansi3, t.ansi3 + "24") : tag(t, tv.total ? `${tv.met} / ${tv.total}` : "—")));
       })
+      .when(pages.some((p) => p.kind === "contract"), (e) => e.child(groupTitle(contractStrings(lang).contracts, null, lang)))
+      .children(pages.flatMap((page, index) => page.kind === "contract" ? [
+        stepRow({ id: `contract-${page.contract.kind}`, title: page.title, position: CONTRACT_ICON[page.contract.kind] ?? "◇" }, index),
+      ] : []))
       .children(parts.flatMap(({ part, steps }) => [
-        h_flex().px(8).pt(12).pb(3).gap(8).items_center().text_size(10).font_semibold().text_color(t.dim)
-          .child(div().flex_1().min_w(0).truncate().child(part.title.toUpperCase()))
-          .child(div().flex_none().child(`${part.steps.filter((s) => isRead(s, this.read)).length} / ${part.steps.length}`)),
-        ...steps.map((s) => stepRow(s, s.position - 1)),
+        groupTitle(part.title, `${part.steps.filter((s) => isRead(s, this.read)).length} / ${part.steps.length}`, lang),
+        ...steps.map((s) => stepRow(s, this.pageIndex("step", s.id))),
       ]))
       .when(this.unreadOnly && !parts.length, (e) => e.child(div().px(8).pt(12).text_size(12).text_color(t.muted).child("Every step is read.")))
-      .child(div().mt(8).mx(8).h(1).bg(t.border))
-      .child(h_flex().id("toc-tail").mt(6).w_full().pl(6).pr(8).py(5).gap(8).items_center().rounded(6).cursor_pointer()
-        .border_l(2).border_color(this.step === v.steps.length ? t.accent : "#00000000")
-        .when(this.step === v.steps.length, (e) => e.bg(t.accent + "1f"))
-        .hover((st) => st.bg(t.hover))
-        .on_click((_e, cx) => { this.go(v.steps.length); cx.notify(); })
-        .child(div().flex_none().w(18).text_center().text_size(11).text_color(t.dim).child("…"))
+      .child(div().mt(10).mb(4).mx(8).h(1).bg(t.border))
+      .child(row("toc-tail", tailIndex)
+        .child(badge().bg(t.raised).text_color(t.dim).child("…"))
         .child(div().flex_1().text_size(12.5).text_color(t.muted).child("Not covered"))
-        .child(div().text_size(11).text_color(fresh ? t.accent : t.dim).child(String(uncovered)))
+        .child(fresh ? tag(t, String(uncovered), t.accent, t.accent + "24") : tag(t, String(uncovered)))
         .when(fresh > 0, (e) => e.tooltip(`${fresh} hunk${fresh === 1 ? "" : "s"} not read`)))
-      .child(div().px(8).pt(12).text_size(10.5).text_color(t.dim).child(this.meta()));
+      .child(div().px(8).pt(14).text_size(10.5).line_height(1.5).text_color(t.dim).child(this.meta()));
   }
 
   meta() {
@@ -1170,28 +1366,31 @@ export class Walkthrough {
     const part = this.view.parts[s.part];
     const total = this.view.steps.length;
     const read = isRead(s, this.read);
-    return v_flex().id(`page-${s.id}-${this.shown.entry.generatedAt}`).flex_1().min_h(0).overflow_y_scrollbar().px(22).py(16).gap(10)
+    return pageFrame(`page-${s.id}-${this.shown.entry.generatedAt}`)
       .child(h_flex().gap(8).items_center()
-        .child(div().flex_1().text_size(10.5).font_semibold().text_color(t.dim).child(`${part.title.toUpperCase()}  ·  STEP ${s.position} OF ${total}`))
+        // The part title in the report's language, the rest in English: each upper-cased by its own rules.
+        .child(eyebrow(t, `${upper(part.title, this.contractLanguage())}  ·  ${upper(`Step ${s.position} of ${total}`)}`).flex_1())
         .child(button(t, "read-toggle", read ? "✓ Read" : "Mark read", (_e, cx) => { this.toggleRead(); cx.notify(); }, {
-          kind: "ghost", small: true, disabled: s.outdated,
+          kind: read ? "soft" : "outline", small: true, disabled: s.outdated,
           tooltip: s.outdated ? "Its code has changed: regenerate to read it as it is now" : read ? "Mark unread (x)" : "Mark read (x)",
         })))
-      .child(h_flex().gap(8).items_center().flex_wrap()
-        .child(div().text_size(17).font_semibold().child(s.title))
+      .child(h_flex().gap(10).items_center().flex_wrap()
+        .child(div().text_size(22).line_height(1.3).font_semibold().child(s.title))
         .when(s.weight === "key", (e) => e.child(chip(t, "Key change", t.accent, t.accent + "14").tooltip("The rest of the change depends on this, or its main behavior lives here. Read it closely.")))
         .when(s.weight === "skim", (e) => e.child(chip(t, "Context", null, t.raised).tooltip("A supporting change, here so the rest makes sense. Safe to skim.")))
         .when(s.outdated, (e) => e.child(chip(t, "Outdated", t.blocked, t.blocked + "14").tooltip("Code this step described has changed or is gone."))))
+      .when(Boolean(this.navigationFile), (e) => e.child(div().text_size(11.5).text_color(t.accent).child(`From blueprint: ${this.navigationFile}`)))
       .when(Boolean(this.taskView?.total), (e) => {
         const asks = asksOf(this.taskView, s);
-        const toTask = (id, el) => div().id(id).cursor_pointer().on_click((_e, cx) => { this.go(-1); cx.notify(); }).child(el);
+        const toTask = (id, el) => div().id(id).cursor_pointer().on_click((_e, cx) => { this.go(this.pageIndex("task")); cx.notify(); }).child(el);
         return e.child(h_flex().gap(6).flex_wrap().items_center().children(asks.length
           ? asks.map((a) => toTask(`for-${s.id}-${a.id}`, chip(t, `For: ${clip(a.text, 64)}`, t.ansi2, t.ansi2 + "12").tooltip(a.text)))
           : [toTask(`for-${s.id}-none`, chip(t, "Not tied to a request", null, t.raised).tooltip("No request in the task points at this step: supporting work, or work the task doesn't mention."))]));
       })
-      .child(div().max_w(820).text_size(13.5).line_height(1.6).child(s.text))
-      .when(s.notes.length > 0, (e) => e.child(v_flex().w_full().max_w(820).gap(6).children(s.notes.map((n) =>
-        h_flex().w_full().gap(8).items_start().child(chip(t, NOTE_LABEL[n.kind], t.blocked, t.blocked + "12").tooltip(NOTE_ABOUT[n.kind])).child(div().flex_1().min_w(0).pt(1).text_size(12.5).line_height(1.5).text_color(t.muted).child(n.text))))))
+      // Markdown, so the model's `code` reads as code rather than as backticks.
+      .child(div().w_full().max_w(820).text_size(14).line_height(1.65).child(TextView.markdown(`step-text-${s.id}`, s.text).selectable(true)))
+      .when(s.notes.length > 0, (e) => e.child(v_flex().w_full().max_w(820).gap(8).children(s.notes.map((n, i) =>
+        callout(t, noteColor(t, n.kind), NOTE_LABEL[n.kind], n.text).id(`note-${s.id}-${i}`).tooltip(NOTE_ABOUT[n.kind])))))
       // The banner above and the Outdated chip say it already; this says how much.
       .when(s.outdated, (e) => e.child(h_flex().gap(6).items_center().flex_wrap().text_size(12)
         .child(div().font_semibold().text_color(t.blocked).child(s.found.length ? `${s.missing} of ${s.missing + s.found.length} hunks` : "Every hunk"))
@@ -1199,24 +1398,82 @@ export class Walkthrough {
       .when(s.found.length > 0, (e) => e.child(this.code(t, s.found)));
   }
 
+  /** Recap with a native, local diagram; source remains available on demand. */
+  recap(t) {
+    const w = this.shown.entry.walkthrough;
+    // The blueprint card's own padding (12 a side) and border (1 a side).
+    const available = this.contentWidth() - 26;
+    const omitted = (w.omitted?.recap ?? 0) + (w.omitted?.contracts ?? 0);
+    const language = this.contractLanguage(), words = recapStrings(language);
+    const changeZoom = (factor, cx) => { this.diagramZoom = Math.max(0.5, Math.min(3, this.diagramZoom * factor)); cx.notify(); };
+    const heading = (text) => div().pt(8).text_size(15).font_semibold().child(text);
+    const filePill = (path) => div().flex_none().px(7).h(20).flex().items_center().rounded(6).bg(t.raised).border_1().border_color(t.border)
+      .text_size(11).font_family(settings().font_family ?? "JetBrains Mono").text_color(t.muted).child(path);
+    const zoom = h_flex().flex_none().items_center().rounded(8).border_1().border_color(t.border)
+      .child(button(t, "diagram-minus", "−", (_e, cx) => changeZoom(1 / 1.25, cx), { small: true, kind: "ghost", tooltip: "Zoom out" }))
+      .child(div().w(1).h(14).bg(t.border))
+      .child(button(t, "diagram-fit", "Fit", (_e, cx) => { this.diagramZoom = 1; cx.notify(); }, { small: true, kind: "ghost" }))
+      .child(div().w(1).h(14).bg(t.border))
+      .child(button(t, "diagram-plus", "+", (_e, cx) => changeZoom(1.25, cx), { small: true, kind: "ghost", tooltip: "Zoom in" }));
+    const change = (c, i) => h_flex().id(`recap-change-${i}`).w_full().gap(12).items_start().p(14).rounded(12).border_1().border_color(t.border).bg(t.surface ?? t.raised)
+      .child(div().flex_none().size(24).rounded_full().bg(t.accent + "24").text_color(t.accent).text_size(11).font_semibold().flex().items_center().justify_center().child(String(i + 1)))
+      .child(v_flex().flex_1().min_w(0).gap(8)
+        .child(div().text_size(13.5).line_height(1.55).font_medium().child(TextView.markdown(`recap-change-text-${i}`, c.description)))
+        .child(h_flex().gap(8).items_start()
+          .child(div().flex_none().pt(2).text_size(10.5).font_semibold().text_color(t.dim).child(upper(words.motivation, words.tag)))
+          .child(div().flex_1().min_w(0).text_size(12.5).line_height(1.55).text_color(t.muted).child(TextView.markdown(`recap-motivation-${i}`, c.motivation))))
+        .child(h_flex().gap(6).flex_wrap().children(c.paths.map(filePill))));
+    return pageFrame(`recap-${this.shown.entry.generatedAt}`)
+      .child(eyebrow(t, words.recap, null, words.tag))
+      .child(div().text_size(22).line_height(1.3).font_semibold().child(w.title))
+      .when(Boolean(w.summary), (e) => e.child(div().max_w(820).text_size(14).line_height(1.6).text_color(t.muted).child(w.summary)))
+      .when(omitted > 0, (e) => e.child(callout(t, t.ansi3, null, words.leftOut.replace("{count}", String(omitted)))))
+      .when(!w.recap, (e) => e.child(callout(t, t.muted, null, recapMarkdown(null).replace(/^###[^\n]*\n+/, "").trim())))
+      .when(Boolean(w.recap?.architecture.description), (e) => e
+        .child(heading(words.architecture))
+        .child(div().max_w(820).text_size(13.5).line_height(1.6).child(TextView.markdown("architecture-description", w.recap.architecture.description).selectable(true))))
+      .when(Boolean(w.recap) && !w.recap.architecture.mermaid, (e) => e.child(div().text_size(12).text_color(t.dim).child(words.noBlueprint)))
+      .when(Boolean(w.recap?.architecture.mermaid), (el) => el
+        .child(v_flex().w_full().gap(10).p(12).rounded(12).border_1().border_color(t.border).bg(t.surface ?? t.raised)
+          .child(h_flex().gap(8).items_center()
+            .child(zoom)
+            .child(div().flex_1())
+            .child(button(t, "diagram-source", this.diagramSource ? "Hide Mermaid" : "Mermaid source", (_e, cx) => { this.diagramSource = !this.diagramSource; cx.notify(); }, { small: true, kind: "ghost" })))
+          .child(blueprintView(w.recap.architecture, t, {
+            words,
+            width: available, zoom: this.diagramZoom,
+            files: this.diff?.files ?? [], selectedId: this.diagramSelected, fileTargets: (path) => this.blueprintTargets(path),
+            onSelect: (id, cx) => { this.diagramSelected = id; cx.notify(); },
+            onFile: (path, cx) => this.goToBlueprintFile(path, cx),
+            onClose: (cx) => { this.diagramSelected = null; cx.notify(); },
+          })))
+        .when(this.diagramSource, (e) => e.child(TextView.markdown("mermaid-source", "```mermaid\n" + mermaidWithConnections(w.recap.architecture.mermaid, w.recap.architecture.connections, w.recap.architecture.groups) + "\n```").selectable(true))))
+      .when(Boolean(w.recap?.changes.length || w.recap?.other?.length), (e) => e.child(heading(words.changesAndMotivations)))
+      .when(Boolean(w.recap), (e) => e.children(w.recap.changes.map(change)))
+      .when(Boolean(w.recap?.other?.length), (e) => e.child(v_flex().id("recap-other").w_full().gap(8).p(14).rounded(12).border_1().border_color(t.border)
+        .child(div().text_size(10.5).font_semibold().text_color(t.dim).child(upper(words.other, words.tag)))
+        .child(h_flex().gap(6).flex_wrap().children(w.recap.other.map(filePill)))));
+  }
+
   /** Everything no step covers, file by file, each with the model's one-line note. */
   tail(t) {
     const v = this.view;
-    return v_flex().id(`tail-${this.shown.entry.generatedAt}`).flex_1().min_h(0).overflow_y_scrollbar().px(22).py(16).gap(10)
-      .child(div().text_size(18).font_semibold().child("Not covered"))
+    return pageFrame(`tail-${this.shown.entry.generatedAt}`)
+      .child(eyebrow(t, "The rest of the diff"))
+      .child(div().text_size(22).line_height(1.3).font_semibold().child("Not covered"))
       .child(div().max_w(820).text_size(12.5).text_color(t.muted).child(v.uncovered.length
         ? "Changes no step describes: edits made after the walkthrough was written, ones the model judged routine, generated and binary files, and files too large to read. Open a file to see its hunks."
         : "Every change is covered by a step."))
-      .children(v.uncovered.map(({ file, hunks, note }) => {
+      .children([...v.uncovered].sort((a, b) => Number(b.file.path === this.navigationFile) - Number(a.file.path === this.navigationFile)).map(({ file, hunks, note }) => {
         const id = `${file.scope}:${file.path}`;
         const open = this.openFiles.has(id);
         const twice = v.uncovered.filter((u) => u.file.path === file.path).length > 1;
         const added = hunks.reduce((n, h) => n + h.added, 0), deleted = hunks.reduce((n, h) => n + h.deleted, 0);
         const fresh = hunks.filter((h) => !hunkRead(h.id, this.read)).length;
         const all = { hunkIds: hunks.map((h) => h.id) };
-        return v_flex().rounded(8).border_1().border_color(fresh ? t.accent : t.border)
+        return v_flex().rounded(12).overflow_hidden().border_1().border_color(file.path === this.navigationFile || fresh ? t.accent + "88" : t.border).bg(t.surface ?? t.raised)
           .child(h_flex().pr(8).gap(8).items_center()
-            .child(h_flex().id(`tail-${id}`).flex_1().min_w(0).px(10).py(6).gap(8).items_center().when(hunks.length > 0, (e) => e.cursor_pointer().hover((st) => st.bg(t.hover)))
+            .child(h_flex().id(`tail-${id}`).flex_1().min_w(0).px(12).py(9).gap(8).items_center().when(hunks.length > 0, (e) => e.cursor_pointer().hover((st) => st.bg(t.hover)))
               .on_click((_e, cx) => { if (!hunks.length) return; open ? this.openFiles.delete(id) : this.openFiles.add(id); cx.notify(); })
               .child(div().w(10).text_size(9).text_color(t.dim).child(hunks.length ? (open ? "▼" : "▶") : ""))
               .child(v_flex().flex_1().min_w(0)
@@ -1254,12 +1511,13 @@ export class Walkthrough {
       const opened = headers && name !== last;
       if (opened) {
         const sum = totals.get(file.path);
-        rows.push(h_flex().mt(rows.length ? 10 : 0).h(28).px(12).gap(8).items_center().bg(t.raised).border_b(1).border_color(t.border)
-          .child(div().flex_1().min_w(0).truncate().text_size(12).font_semibold().child(file.path))
+        rows.push(h_flex().when(rows.length > 0, (e) => e.border_t(1).border_color(t.border)).h(36).px(12).gap(8).items_center().bg(t.raised).border_b(1).border_color(t.border)
+          .child(div().flex_none().text_size(12).text_color(t.dim).child("▤"))
+          .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_medium().when(file.path === this.navigationFile, (e) => e.text_color(t.accent)).child(file.path))
           .when(twice.has(file.path) || (file.scope === "staged" && this.scope === "uncommitted"), (e) => e.child(chip(t, scopeName(file.scope))))
           .when(file.status !== "modified", (e) => e.child(div().text_size(11).text_color(t.dim).child(file.oldPath ? `${file.status} from ${file.oldPath}` : file.status)))
-          .when(Boolean(sum?.added), (e) => e.child(div().text_size(11.5).text_color(t.ansi2).child(`+${sum.added}`)))
-          .when(Boolean(sum?.deleted), (e) => e.child(div().text_size(11.5).text_color(t.ansi1).child(`−${sum.deleted}`))));
+          .when(Boolean(sum?.added), (e) => e.child(chip(t, `+${sum.added}`, t.ansi2, t.ansi2 + "1f")))
+          .when(Boolean(sum?.deleted), (e) => e.child(chip(t, `−${sum.deleted}`, t.ansi1, t.ansi1 + "1f"))));
       }
       // Where the hunk is, in words, instead of git's @@ line: lines skipped since the last one of its file, its line, its function.
       const label = hunkLabel(hunk, name === last ? previous : null);
@@ -1267,8 +1525,8 @@ export class Walkthrough {
       previous = hunk;
       // Without headers (Not covered), a hunk not read yet says so.
       const fresh = !headers && !hunkRead(hunk.id, this.read);
-      rows.push(h_flex().h(22).px(10).gap(8).items_center().when(rows.length > 0 && !opened, (e) => e.border_t(1).border_color(t.border))
-        .bg(fresh ? t.accent + "1f" : t.hover).text_size(11).text_color(fresh ? t.accent : t.dim).tooltip(hunk.header)
+      rows.push(h_flex().h(24).px(12).gap(8).items_center().when(rows.length > 0 && !opened, (e) => e.border_t(1).border_color(t.border))
+        .bg(fresh ? t.accent + "1f" : (t.surface ?? t.hover)).text_size(11).text_color(fresh ? t.accent : t.dim).tooltip(hunk.header)
         .when(fresh, (e) => e.child(div().flex_none().child("●")))
         .child(div().flex_none().child(label.skipped ? `⋯ ${label.skipped} line${label.skipped === 1 ? "" : "s"} · ${label.at}` : label.at))
         .when(Boolean(label.context), (e) => e.child(div().flex_1().min_w(0).truncate().font_family(font).text_color(fresh ? t.accent : t.muted).child(label.context))));
@@ -1284,7 +1542,7 @@ export class Walkthrough {
       }
     }
     if (cut) rows.push(div().px(10).py(6).text_size(11.5).text_color(t.dim).child(`${cut} more line${cut === 1 ? "" : "s"} not drawn here.`));
-    return v_flex().w_full().flex_none().rounded(8).border_1().border_color(t.border).overflow_hidden().children(rows);
+    return v_flex().w_full().flex_none().rounded(10).border_1().border_color(t.border).bg(t.background).overflow_hidden().children(rows);
   }
 
   line(t, file, { kind, number, text }, font, numbers = 44) {
@@ -1293,7 +1551,7 @@ export class Walkthrough {
     const spot = this.spot(file, number, side);
     const selected = this.target && sameSpot(this.target, spot);
     // An added or removed line has a coloured edge as well as its tint, so the change reads at a glance.
-    return h_flex().id(`l-${file.scope}:${file.path}-${side}${number}`).h(20).w_full().gap(8).font_family(font).text_size(11.5).cursor_pointer()
+    return h_flex().id(`l-${file.scope}:${file.path}-${side}${number}`).h(21).w_full().gap(8).pr(10).font_family(font).text_size(11.5).cursor_pointer()
       .border_l(2).border_color(kind === "+" ? t.ansi2 : kind === "-" ? t.ansi1 : "#00000000")
       .when(kind === "+", (e) => e.bg(t.ansi2 + "14")).when(kind === "-", (e) => e.bg(t.ansi1 + "14"))
       .when(Boolean(selected), (e) => e.bg(t.selection))
@@ -1327,14 +1585,21 @@ export class Walkthrough {
   }
 
   footer(t) {
-    const steps = this.view.steps.length;
+    const steps = this.view.steps.length, pages = this.pages(), page = pages[this.step], next = pages[this.step + 1];
     const read = this.view.steps.filter((s) => isRead(s, this.read)).length;
     const agent = this.agent();
     const n = this.ownComments().length;
-    return h_flex().h(44).flex_none().px(14).gap(8).items_center().border_t(1).border_color(t.border)
-      .child(button(t, "prev", this.step === 0 && this.taskView ? "← Task" : "← Previous", (_e, cx) => { this.move(-1); cx.notify(); }, { small: true, disabled: this.step <= this.firstPage() }))
-      .child(button(t, "next", this.step < 0 ? "First step →" : this.step === steps - 1 ? "Not covered →" : "Next →", (_e, cx) => { this.move(1); cx.notify(); }, { small: true, disabled: this.step >= steps }))
-      .child(div().text_size(11.5).text_color(t.dim).child(this.step < steps ? `${read} / ${steps} read · ← → to move` : `End of the walkthrough · ${read} / ${steps} read`))
+    const wide = (this.width ?? 1000) >= 900;
+    return h_flex().h(52).flex_none().px(14).gap(8).items_center().border_t(1).border_color(t.border).bg(t.surface ?? t.popover)
+      .child(button(t, "prev", "← Previous", (_e, cx) => { this.move(-1); cx.notify(); }, { small: true, disabled: this.step === 0 }))
+      .child(button(t, "next", next && next.kind !== "step" ? `${next.title} →` : "Next →", (_e, cx) => { this.move(1); cx.notify(); }, { kind: "solid", small: true, disabled: this.step >= pages.length - 1 }))
+      .child(h_flex().pl(6).gap(8).items_center()
+        .child(meter(t, 72, steps ? read / steps : 0, read === steps && steps ? t.ansi2 : t.accent))
+        // A page that isn't a step is named, so the footer says where the reader is as well as how far.
+        .child(div().text_size(11.5).text_color(t.dim).child(page?.kind === "tail" ? `End · ${read} / ${steps} read`
+          : page?.kind === "step" ? `${read} / ${steps} read` : `${page?.title ?? ""} · ${read} / ${steps} read`)))
+      .child(h_flex().id("footer-keys").pl(4).gap(4).items_center().text_size(11).text_color(t.dim).tooltip("← → (or j k) move between pages")
+        .child(kbd(t, "←")).child(kbd(t, "→")).when(wide, (e) => e.child(div().pl(2).child("to move"))))
       .child(button(t, "unread-only", this.unreadOnly ? "Show all" : "Unread only", (_e, cx) => { this.unreadOnly = !this.unreadOnly; cx.notify(); },
         { kind: "ghost", small: true, tooltip: this.unreadOnly ? "List every step again (u)" : "List and step through only the steps not read yet (u)" }))
       .child(div().flex_1())
