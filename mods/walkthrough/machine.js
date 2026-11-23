@@ -4,7 +4,7 @@
 // functions it uses and sends them there instead:
 //   exec          -> `on: <machine>`, with the PATH an interactive bash has (claude is in ~/.local/bin)
 //   readTextFile  -> `on: <machine>`
-//   writeTextFile -> through exec, in pieces (exec takes no input and an argument is at most 128 KB)
+//   writeTextFile -> through exec, in pieces (exec takes no input, and Windows caps a command line at 32K chars)
 //   watchFolder   -> a poll for files changed since the last look (the app can't watch WSL folders)
 //   home, appHome -> the machine's home, and the app folder as the machine sees it (/mnt/c/...)
 // With no machine (a space on this computer) everything is herdr's own.
@@ -40,8 +40,9 @@ export function readTextFile(path, options = {}) {
   return herdr.readTextFile(path, MACHINE ? { ...options, on: options.on ?? MACHINE } : options);
 }
 
-// UTF-16 units per piece: at most 3 bytes each in UTF-8, under Linux's 128 KB per argument.
-const PIECE = 32_000;
+// UTF-16 units per piece. The command goes through hc on Windows, whose whole command line is at
+// most 32,767 characters, and quoting can double a piece (every " gets a \), so keep it well under.
+const PIECE = 12_000;
 
 export async function writeTextFile(path, text, expected) {
   if (!MACHINE) return herdr.writeTextFile(path, text, expected);
